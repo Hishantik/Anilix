@@ -1,0 +1,117 @@
+package player
+
+import (
+	"testing"
+)
+
+func TestPlayerString(t *testing.T) {
+	tests := []struct {
+		name     string
+		player   *Player
+		expected string
+	}{
+		{"mpv", Mpv, "mpv"},
+		{"vlc", Vlc, "vlc"},
+		{"iina", Iina, "iina"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.player.String() != tt.expected {
+				t.Errorf("Player.String() = %v, want %v", tt.player.String(), tt.expected)
+			}
+		})
+	}
+}
+
+func TestFromString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"mpv lowercase", "mpv", "mpv"},
+		{"MPV uppercase", "MPV", "mpv"},
+		{"vlc", "vlc", "vlc"},
+		{"iina", "iina", "iina"},
+		{"unknown defaults to mpv", "unknown", "mpv"},
+		{"empty defaults to mpv", "", "mpv"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := FromString(tt.input)
+			if p.Name != tt.expected {
+				t.Errorf("FromString(%q) = %v, want %v", tt.input, p.Name, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMpvArgs(t *testing.T) {
+	p := &Player{Name: "mpv"}
+	url := "https://example.com/video.m3u8"
+
+	tests := []struct {
+		name    string
+		opts    Options
+		wantURL bool
+	}{
+		{"basic", Options{}, true},
+		{"with title", Options{Title: "Test Anime EP1"}, true},
+		{"with referrer", Options{Referrer: "https://example.com"}, true},
+		{"with subtitles", Options{Subtitles: []string{"sub1.vtt", "sub2.vtt"}}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := p.mpvArgs(url, tt.opts)
+			found := false
+			for _, arg := range args {
+				if arg == url {
+					found = true
+					break
+				}
+			}
+			if !found && tt.wantURL {
+				t.Errorf("mpvArgs() missing URL in args: %v", args)
+			}
+		})
+	}
+}
+
+func TestVlcArgs(t *testing.T) {
+	p := &Player{Name: "vlc"}
+	url := "https://example.com/video.m3u8"
+
+	args := p.vlcArgs(url, Options{
+		Title:    "Test",
+		Referrer: "https://referrer.com",
+	})
+
+	foundTitle := false
+	foundReferrer := false
+	foundURL := false
+
+	for _, arg := range args {
+		if arg == "--meta-title=Test" {
+			foundTitle = true
+		}
+		if arg == "--http-referrer=https://referrer.com" {
+			foundReferrer = true
+		}
+		if arg == url {
+			foundURL = true
+		}
+	}
+
+	if !foundTitle {
+		t.Error("vlcArgs() missing title arg")
+	}
+	if !foundReferrer {
+		t.Error("vlcArgs() missing referrer arg")
+	}
+	if !foundURL {
+		t.Error("vlcArgs() missing URL")
+	}
+}
