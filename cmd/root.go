@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/anilix/anilix/config"
+	"github.com/anilix/anilix/inline"
 	"github.com/spf13/cobra"
 )
 
@@ -12,6 +15,7 @@ var rootCmd = &cobra.Command{
 	Short: "Anime streaming CLI",
 	Long:  `Anilix - Stream anime from your terminal`,
 	Run:   runInline,
+	Args:  cobra.RangeArgs(0, 1),
 }
 
 func Execute() error {
@@ -23,14 +27,25 @@ func Init() error {
 }
 
 func runInline(cmd *cobra.Command, args []string) {
-	// Placeholder for inline mode
+	query := ""
+	if len(args) > 0 {
+		query = strings.Join(args, " ")
+	}
+
+	mode := inline.New()
+	if err := mode.Run(query); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func main() {
 	if err := Init(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	if err := Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

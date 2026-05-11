@@ -53,11 +53,43 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+func TestSeasonsOf(t *testing.T) {
+	m := &Mock{}
+
+	// Attack on Titan has multiple seasons
+	anime := &source.Anime{Name: "Attack on Titan", Source: m}
+	seasons, err := m.SeasonsOf(anime)
+	if err != nil {
+		t.Fatalf("SeasonsOf() error = %v", err)
+	}
+
+	if len(seasons) != 4 {
+		t.Errorf("SeasonsOf() returned %d seasons, want 4", len(seasons))
+	}
+
+	// Check season numbers
+	for i, s := range seasons {
+		if s.Number != i+1 {
+			t.Errorf("Season %d number = %v, want %v", i, s.Number, i+1)
+		}
+	}
+
+	// One Piece has single season
+	anime2 := &source.Anime{Name: "One Piece", Source: m}
+	seasons2, err := m.SeasonsOf(anime2)
+	if err != nil {
+		t.Fatalf("SeasonsOf() error = %v", err)
+	}
+	if len(seasons2) != 1 {
+		t.Errorf("SeasonsOf() for One Piece = %d seasons, want 1", len(seasons2))
+	}
+}
+
 func TestEpisodesOf(t *testing.T) {
 	m := &Mock{}
 
 	anime := &source.Anime{Name: "One Piece", Source: m}
-	episodes, err := m.EpisodesOf(anime)
+	episodes, err := m.EpisodesOf(anime, 1)
 	if err != nil {
 		t.Fatalf("EpisodesOf() error = %v", err)
 	}
@@ -70,9 +102,36 @@ func TestEpisodesOf(t *testing.T) {
 		if ep.Number != float64(i+1) {
 			t.Errorf("Episode %d number = %v, want %v", i, ep.Number, float64(i+1))
 		}
+		if ep.Season != 1 {
+			t.Errorf("Episode %d season = %v, want 1", i, ep.Season)
+		}
 		if ep.Anime != anime {
 			t.Errorf("Episode %d Anime is not set", i)
 		}
+	}
+}
+
+func TestEpisodesOfMultiSeason(t *testing.T) {
+	m := &Mock{}
+
+	anime := &source.Anime{Name: "Attack on Titan", Source: m}
+
+	// Season 1
+	ep1, err := m.EpisodesOf(anime, 1)
+	if err != nil {
+		t.Fatalf("EpisodesOf() error = %v", err)
+	}
+	if len(ep1) != 12 {
+		t.Errorf("Season 1 has %d episodes, want 12", len(ep1))
+	}
+
+	// Season 4
+	ep4, err := m.EpisodesOf(anime, 4)
+	if err != nil {
+		t.Fatalf("EpisodesOf() error = %v", err)
+	}
+	if len(ep4) != 16 {
+		t.Errorf("Season 4 has %d episodes, want 16", len(ep4))
 	}
 }
 
@@ -81,6 +140,7 @@ func TestStreamsOf(t *testing.T) {
 
 	episode := &source.Episode{
 		Number: 1,
+		Season: 1,
 		Anime:  &source.Anime{Name: "One Piece", Source: m},
 	}
 
