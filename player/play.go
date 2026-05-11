@@ -103,9 +103,3 @@ func FromString(name string) *Player {
 		return Mpv // default to mpv
 	}
 }
-
-// IsAvailable checks if a player is installed
-func IsAvailable(name string) bool {
-	cmd := exec.Command(name, "--version")
-	return cmd.Run() == nil
-}
