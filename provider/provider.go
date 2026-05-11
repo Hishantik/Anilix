@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"github.com/anilix/anilix/provider/allanime"
 	"github.com/anilix/anilix/provider/mock"
 	"github.com/anilix/anilix/source"
 )
@@ -23,6 +24,13 @@ var providers = []*Provider{
 		Name: mock.Name,
 		CreateSource: func() (source.Source, error) {
 			return &mock.Mock{}, nil
+		},
+	},
+	{
+		ID:   allanime.ID,
+		Name: allanime.Name,
+		CreateSource: func() (source.Source, error) {
+			return &allanime.Allanime{}, nil
 		},
 	},
 }
