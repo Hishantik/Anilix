@@ -7,6 +7,7 @@ type Anime struct {
 	Year   int
 	Genres []string
 	Status string
+	MALID  int    // MyAnimeList ID for metadata linkage
 	Source Source
 }
 

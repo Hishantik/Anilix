@@ -47,9 +47,27 @@ type Source interface {
 
 ### Data Models
 
-- `Anime` - Title, URL, Cover, Year, Genres, Status
+- `Anime` - Title, URL, Cover, Year, Genres, Status, **MALID** (MyAnimeList ID for metadata linkage)
 - `Episode` - Number, Title, Season, URL, associated Anime
 - `Stream` - Quality, URL, Provider, Subtitle URLs
+
+### Jikan Integration (Search & Metadata)
+
+Jikan API (MyAnimeList) provides anime search and metadata. Streaming links come from separate sources.
+
+**Architecture:**
+```
+JikanProvider (search) → Anime (with MAL ID) → AnimeLinker → StreamingSource (episodes/streams)
+```
+
+- **JikanProvider** — handles search/metadata via Jikan API, returns Anime with MAL ID
+- **AnimeLinker** — maps Anime (with MAL ID) to appropriate streaming source's episodes
+- **StreamingSource** — existing sources (allmanga, etc.) for episodes and streams
+
+**Data Flow:**
+1. `JikanProvider.Search(query)` → Jikan API → `[]*Anime` (with MAL ID, cover, year, genres)
+2. User selects anime → AnimeLinker maps to streaming source via MAL ID
+3. `StreamingSource.EpisodesOf(anime)` / `StreamsOf(episode)` → actual streaming links
 
 ### Provider Pattern
 
@@ -85,6 +103,10 @@ anilix/
 │   ├── provider.go    # Provider struct
 │   ├── init.go        # Registration
 │   ├── allmanga/      # allmanga.to source
+│   ├── jikan/         # Jikan API (search/metadata only)
+│   │   ├── client.go  # Jikan API client
+│   │   ├── types.go   # API response types
+│   │   └── linker.go  # AnimeLinker for MAL ID mapping
 │   ├── generic/       # Generic scraper
 │   └── custom/        # Lua scrapers (optional v2)
 ├── source/            # Data models (source.go, anime.go, episode.go, stream.go)
