@@ -1,259 +1,179 @@
-package allanime
+package Allanime
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/anilix/anilix/extractor"
 	"github.com/anilix/anilix/source"
 )
 
-const (
-	Name = "allanime"
-	ID   = "allanime"
-)
+// AllanimeProvider implements source.Source for AllAnime GraphQL API
+type AllanimeProvider struct {
+	client      *AllanimeClient
+	translation string // "sub" or "dub"
+}
 
-type Allanime struct{}
+func NewAllanimeProvider() *AllanimeProvider {
+	return &AllanimeProvider{
+		client:      NewAllanimeClient(),
+		translation: "sub",
+	}
+}
 
-func (a *Allanime) Name() string { return Name }
+func (a *AllanimeProvider) Name() string {
+	return "AllAnime"
+}
 
-func (a *Allanime) ID() string { return ID }
+func (a *AllanimeProvider) ID() string {
+	return "allanime"
+}
 
-func (a *Allanime) Search(query string) ([]*source.Anime, error) {
-	resp, err := searchAnime(query)
+// Search implements source.Source - searches anime via AllAnime GraphQL
+func (a *AllanimeProvider) Search(query string) ([]*source.Anime, error) {
+	ctx := context.Background()
+
+	edges, err := a.client.SearchShows(ctx, query, 10, 1, a.translation)
 	if err != nil {
-		return nil, fmt.Errorf("search failed: %w", err)
+		return nil, fmt.Errorf("AllAnime search failed: %w", err)
 	}
 
-	var animes []*source.Anime
-	for _, edge := range resp.Data.Shows.Edges {
-		animes = append(animes, &source.Anime{
-			Name:   edge.Name,
-			URL:    fmt.Sprintf("https://allmanga.to/anime/%s", edge.ID),
-			Cover:  edge.Thumbnail,
-			Source: a,
-		})
+	animes := make([]*source.Anime, 0, len(edges))
+	for _, show := range edges {
+		anime := a.client.MapToAnime(&show)
+		animes = append(animes, anime)
 	}
 
 	return animes, nil
 }
 
-func (a *Allanime) SeasonsOf(anime *source.Anime) ([]source.Season, error) {
-	// Extract show ID from URL
-	showID := extractShowID(anime.URL)
-	if showID == "" {
-		return nil, fmt.Errorf("invalid anime URL: %s", anime.URL)
-	}
-
-	resp, err := getShow(showID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get show: %w", err)
-	}
-
-	var seasons []source.Season
-	seasonNum := 1
-
-	// Parse availableEpisodesDetail for seasons
-	for mode, episodes := range resp.Data.Show.AvailableEpisodesDetail {
-		if len(episodes) > 0 {
-			name := modeToSeasonName(mode)
-			seasons = append(seasons, source.Season{
-				Number: seasonNum,
-				Name:   name,
-			})
-			seasonNum++
-		}
-	}
-
-	// Default to single season if no details
-	if len(seasons) == 0 {
-		seasons = append(seasons, source.Season{Number: 1, Name: "Season 1"})
-	}
-
-	return seasons, nil
+// SeasonsOf returns seasons for the anime
+func (a *AllanimeProvider) SeasonsOf(anime *source.Anime) ([]source.Season, error) {
+	// AllAnime doesn't have explicit seasons, return single "Season 1"
+	return []source.Season{{Number: 1, Name: "Season 1"}}, nil
 }
 
-func (a *Allanime) EpisodesOf(anime *source.Anime, season int) ([]*source.Episode, error) {
-	showID := extractShowID(anime.URL)
-	if showID == "" {
-		return nil, fmt.Errorf("invalid anime URL: %s", anime.URL)
+// EpisodesOf returns episodes for a specific season
+func (a *AllanimeProvider) EpisodesOf(anime *source.Anime, season int) ([]*source.Episode, error) {
+	if anime.AllAnimeID == "" {
+		return nil, fmt.Errorf("anime has no AllAnimeID")
 	}
 
-	resp, err := getShow(showID)
+	ctx := context.Background()
+	episodesMap, err := a.client.GetShowEpisodes(ctx, anime.AllAnimeID, a.translation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get show: %w", err)
+		return nil, fmt.Errorf("failed to get episodes: %w", err)
 	}
 
-	// Get episodes for the season
-	mode := seasonToMode(season)
-	var episodeNumbers []int
-
-	if mode != "" {
-		if episodes, ok := resp.Data.Show.AvailableEpisodesDetail[mode]; ok {
-			for _, ep := range episodes {
-				switch v := ep.(type) {
-				case float64:
-					episodeNumbers = append(episodeNumbers, int(v))
-				case int:
-					episodeNumbers = append(episodeNumbers, v)
-				case string:
-					if num, err := strconv.Atoi(v); err == nil {
-						episodeNumbers = append(episodeNumbers, num)
-					}
-				}
-			}
+	// Get the list based on translation type (sub/dub)
+	epList, ok := episodesMap[a.translation]
+	if !ok {
+		// Fallback to sub if dub not available
+		epList, ok = episodesMap["sub"]
+		if !ok {
+			return nil, fmt.Errorf("no episodes found")
 		}
 	}
 
-	// Fallback to availableEpisodes count
-	if len(episodeNumbers) == 0 {
-		count := resp.Data.Show.AvailableEpisodes["sub"]
-		if count == 0 {
-			count = resp.Data.Show.AvailableEpisodes["dub"]
+	episodes := make([]*source.Episode, 0, len(epList))
+	for _, epNum := range epList {
+		num, _ := strconv.ParseFloat(epNum, 64)
+		ep := &source.Episode{
+			Number:  num,
+			URL:     fmt.Sprintf("https://allmanga.to/watch/%s/%s", anime.AllAnimeID, epNum),
+			Anime:   anime,
+			Season:  season,
 		}
-		if count == 0 {
-			for i := 1; i <= 12; i++ {
-				episodeNumbers = append(episodeNumbers, i)
-			}
-		} else {
-			for i := 1; i <= count; i++ {
-				episodeNumbers = append(episodeNumbers, i)
-			}
-		}
-	}
-
-	var episodes []*source.Episode
-	for _, num := range episodeNumbers {
-		episodes = append(episodes, &source.Episode{
-			Number: float64(num),
-			Title:  fmt.Sprintf("Episode %d", num),
-			URL:    fmt.Sprintf("https://allmanga.to/anime/%s/episode/%d", showID, num),
-			Season: season,
-			Anime:  anime,
-		})
+		episodes = append(episodes, ep)
 	}
 
 	return episodes, nil
 }
 
-func (a *Allanime) StreamsOf(episode *source.Episode) ([]*source.Stream, error) {
-	showID := extractShowID(episode.Anime.URL)
-	if showID == "" {
-		return nil, fmt.Errorf("invalid episode URL")
+// StreamsOf returns stream sources for an episode
+// It resolves provider URLs using extractors to get actual playable stream URLs
+func (a *AllanimeProvider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) {
+	if episode.Anime == nil || episode.Anime.AllAnimeID == "" {
+		return nil, fmt.Errorf("episode has no anime or AllAnimeID")
 	}
 
-	episodeString := fmt.Sprintf("%d", int(episode.Number))
-
-	resp, err := getEpisodeStreams(showID, episodeString)
+	ctx := context.Background()
+	epNum := strconv.FormatFloat(episode.Number, 'f', -1, 64)
+	sources, err := a.client.GetEpisodeSources(ctx, episode.Anime.AllAnimeID, epNum, a.translation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get streams: %w", err)
+		return nil, fmt.Errorf("failed to get episode sources: %w", err)
 	}
 
-	// Check for encrypted URLs
-	for _, url := range resp.Data.Episode.SourceUrls {
-		if strings.Contains(url.SourceUrl, "tobeparsed") {
-			// Need to decode encrypted URL
-			decoded, err := decodeTobeparsed(extractTobeparsed(url.SourceUrl))
-			if err == nil {
-				return extractStreamURLsFromDecoded(decoded, episode), nil
+	// Collect all extracted streams
+	var allStreams []*source.Stream
+	seen := make(map[string]bool)
+
+	for _, src := range sources {
+		providerName := src.SourceName
+
+		// Check if provider name is hex-encoded (contains only hex chars)
+		if isHexEncoded(providerName) {
+			providerName = decodeHexProviderID(providerName)
+		}
+
+		providerName = getProviderName(providerName)
+
+		// Try to extract using the matching extractor
+		ext := extractor.Resolve(src.SourceUrl)
+		if ext != nil {
+			// Use extractor to get actual playable streams
+			extracted, err := ext.Extract(ctx, src.SourceUrl, Referer)
+			if err == nil && len(extracted) > 0 {
+				for _, s := range extracted {
+					// Deduplicate by URL
+					if !seen[s.URL] {
+						seen[s.URL] = true
+						s.Provider = providerName
+						allStreams = append(allStreams, s)
+					}
+				}
+			}
+		}
+
+		// Fallback: if no extractor matched, use raw URL
+		if ext == nil && src.SourceUrl != "" {
+			stream := &source.Stream{
+				Provider: providerName,
+				URL:      src.SourceUrl,
+				Referer:  Referer,
+				Quality:  "auto",
+			}
+			if !seen[stream.URL] {
+				seen[stream.URL] = true
+				allStreams = append(allStreams, stream)
 			}
 		}
 	}
 
-	return extractStreamURLs(resp.Data.Episode.SourceUrls, episode), nil
-}
-
-func extractShowID(url string) string {
-	parts := strings.Split(url, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
+	if len(allStreams) == 0 {
+		return nil, fmt.Errorf("no streams found")
 	}
-	return ""
+
+	return allStreams, nil
 }
 
-func modeToSeasonName(mode string) string {
-	switch mode {
-	case "sub":
-		return "Season 1 (Sub)"
-	case "dub":
-		return "Season 1 (Dub)"
-	case "raw":
-		return "Season 1 (Raw)"
-	default:
-		return mode
+// SetTranslation sets sub or dub preference
+func (a *AllanimeProvider) SetTranslation(trans string) {
+	if trans == "sub" || trans == "dub" {
+		a.translation = trans
 	}
 }
 
-func seasonToMode(season int) string {
-	switch season {
-	case 1:
-		return "sub"
-	default:
-		return "sub"
-	}
+// getProviderName normalizes provider names
+func getProviderName(name string) string {
+	name = strings.ToLower(name)
+	name = strings.ReplaceAll(name, " ", "")
+	return name
 }
 
-func extractTobeparsed(url string) string {
-	// Extract base64 data from tobeparsed URL
-	parts := strings.Split(url, "tobeparsed/")
-	if len(parts) > 1 {
-		return parts[1]
-	}
-	return ""
-}
-
-func extractStreamURLs(urls []SourceUrl, episode *source.Episode) []*source.Stream {
-	var streams []*source.Stream
-
-	for _, url := range urls {
-		cleanURL := cleanUrl(url.SourceUrl)
-		if cleanURL == "" || strings.Contains(cleanURL, "tobeparsed") {
-			continue
-		}
-
-		quality := extractQuality(cleanURL)
-		streams = append(streams, &source.Stream{
-			Quality:  quality,
-			URL:      cleanURL,
-			Provider: url.SourceName,
-		})
-	}
-
-	return streams
-}
-
-func extractStreamURLsFromDecoded(urls []SourceUrl, episode *source.Episode) []*source.Stream {
-	var streams []*source.Stream
-
-	for _, url := range urls {
-		cleanURL := cleanUrl(url.SourceUrl)
-		if cleanURL == "" {
-			continue
-		}
-
-		quality := extractQuality(cleanURL)
-		streams = append(streams, &source.Stream{
-			Quality:  quality,
-			URL:      cleanURL,
-			Provider: url.SourceName,
-		})
-	}
-
-	return streams
-}
-
-func extractQuality(url string) string {
-	if strings.Contains(url, "1080") {
-		return "1080p"
-	}
-	if strings.Contains(url, "720") {
-		return "720p"
-	}
-	if strings.Contains(url, "480") {
-		return "480p"
-	}
-	if strings.Contains(url, "360") {
-		return "360p"
-	}
-	return "best"
+// TranslationType returns current translation setting
+func (a *AllanimeProvider) TranslationType() string {
+	return a.translation
 }

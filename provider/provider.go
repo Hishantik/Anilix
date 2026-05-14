@@ -1,39 +1,18 @@
 package provider
 
-import (
-	"github.com/anilix/anilix/provider/allanime"
-	"github.com/anilix/anilix/provider/mock"
-	"github.com/anilix/anilix/source"
-)
-
 type Provider struct {
 	ID           string
 	Name         string
 	UsesHeadless bool
 	IsCustom     bool
-	CreateSource func() (source.Source, error)
+	CreateSource func() (interface{}, error)
 }
 
 func (p Provider) String() string {
 	return p.Name
 }
 
-var providers = []*Provider{
-	{
-		ID:   mock.ID,
-		Name: mock.Name,
-		CreateSource: func() (source.Source, error) {
-			return &mock.Mock{}, nil
-		},
-	},
-	{
-		ID:   allanime.ID,
-		Name: allanime.Name,
-		CreateSource: func() (source.Source, error) {
-			return &allanime.Allanime{}, nil
-		},
-	},
-}
+var providers = []*Provider{}
 
 func All() []*Provider {
 	return providers
@@ -46,4 +25,8 @@ func Get(name string) (*Provider, bool) {
 		}
 	}
 	return nil, false
+}
+
+func Register(p *Provider) {
+	providers = append(providers, p)
 }
