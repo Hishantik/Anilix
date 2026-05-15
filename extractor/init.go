@@ -6,4 +6,7 @@ func init() {
 	Register(NewFilemoonExtractor())
 	Register(NewWixmpExtractor())
 	Register(NewYoutubeExtractor())
+	Register(NewAnihdplayExtractor())
+	Register(NewVidstreamingExtractor())
+	Register(NewMp4uploadExtractor())
 }

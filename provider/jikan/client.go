@@ -11,9 +11,11 @@ import (
 )
 
 type JikanClient struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL     string
+	httpClient  *http.Client
 	rateLimiter *rateLimiter
+	cache       map[int]*AnimeData
+	cacheMu     sync.RWMutex
 }
 
 type rateLimiter struct {
@@ -63,6 +65,7 @@ func NewClient(baseURL string) *JikanClient {
 			Timeout: 30 * time.Second,
 		},
 		rateLimiter: newRateLimiter(3, time.Second),
+		cache:       make(map[int]*AnimeData),
 	}
 }
 
@@ -96,4 +99,83 @@ func (c *JikanClient) SearchAnime(ctx context.Context, query string) (*AnimeResp
 	}
 
 	return &result, nil
+}
+
+// GetAnime fetches full anime details by MAL ID (with caching)
+func (c *JikanClient) GetAnime(ctx context.Context, malID int) (*AnimeData, error) {
+	// Check cache first
+	c.cacheMu.RLock()
+	if cached, ok := c.cache[malID]; ok {
+		c.cacheMu.RUnlock()
+		return cached, nil
+	}
+	c.cacheMu.RUnlock()
+
+	c.rateLimiter.waitForToken()
+
+	url := fmt.Sprintf("%s/anime/%d", c.baseURL, malID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		return nil, fmt.Errorf("rate limited by Jikan API")
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Jikan API returned status %d", resp.StatusCode)
+	}
+
+	var result AnimeSingleResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Cache the result
+	c.cacheMu.Lock()
+	c.cache[malID] = &result.Data
+	c.cacheMu.Unlock()
+
+	return &result.Data, nil
+}
+
+// GetEpisodes fetches episode list for an anime by MAL ID
+func (c *JikanClient) GetEpisodes(ctx context.Context, malID int) ([]Episode, error) {
+	c.rateLimiter.waitForToken()
+
+	url := fmt.Sprintf("%s/anime/%d/episodes", c.baseURL, malID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		return nil, fmt.Errorf("rate limited by Jikan API")
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Jikan API returned status %d", resp.StatusCode)
+	}
+
+	var result EpisodesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
 }

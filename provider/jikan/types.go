@@ -1,8 +1,13 @@
 package jikan
 
-// AnimeResponse represents the Jikan API search response
+// AnimeResponse represents the Jikan API search response (list)
 type AnimeResponse struct {
 	Data []AnimeData `json:"data"`
+}
+
+// AnimeSingleResponse represents the Jikan API single anime response
+type AnimeSingleResponse struct {
+	Data AnimeData `json:"data"`
 }
 
 // AnimeData represents a single anime in Jikan response
@@ -17,6 +22,12 @@ type AnimeData struct {
 	Genres           []Genre     `json:"genres"`
 	Status           string      `json:"status"`
 	Synopsis         string      `json:"synopsis"`
+	Type             string      `json:"type"`       // "TV", "Movie", "OVA", etc.
+	Episodes         int         `json:"episodes"`   // number of episodes
+	Rating           string      `json:"rating"`     // "PG-13 - Teens 13 or older"
+	Score            float64     `json:"score"`      // e.g., 8.02
+	Rank             int         `json:"rank"`       // e.g., 726
+	Popularity       int         `json:"popularity"` // e.g., 9
 }
 
 // Images contains image URLs
@@ -35,4 +46,19 @@ type JPGImages struct {
 type Genre struct {
 	MalID int    `json:"mal_id"`
 	Name  string `json:"name"`
+}
+
+// EpisodesResponse represents the Jikan API episodes response
+type EpisodesResponse struct {
+	Data []Episode `json:"data"`
+}
+
+// Episode represents a single episode
+type Episode struct {
+	MalID     int    `json:"mal_id"`
+	EpisodeID int    `json:"episode_id"`
+	Title     string `json:"title"`
+	TitleJapanese string `json:"title_japanese"`
+	Episode   string `json:"episode"`
+	URL       string `json:"url"`
 }
