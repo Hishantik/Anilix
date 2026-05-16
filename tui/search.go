@@ -124,6 +124,30 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 
+		case "ctrl+t":
+			// Toggle between sub and dub (Ctrl+T)
+			if m.searchState.TranslationType == "sub" {
+				m.searchState.TranslationType = "dub"
+			} else {
+				m.searchState.TranslationType = "sub"
+			}
+			m.textInput.Placeholder = "Search anime..."
+
+			// If in episodes mode, re-fetch episodes with new translation type
+			if m.mode == "episodes" && m.episodeState.AnimeID != "" {
+				selectedAnime := m.searchState.Results[m.searchState.Selected]
+				if selectedAnime != nil {
+					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AnimeID, selectedAnime.MALID))
+				}
+			} else if m.lastQuery != "" {
+				// Re-search if we have a query
+				cmds = append(cmds, m.doSearch(m.lastQuery))
+			}
+
+			m.updateViewport()
+			cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
+			return m, tea.Batch(cmds...)
+
 		case "enter":
 			fmt.Printf("DEBUG: Enter pressed, mode=%s\n", m.mode)
 			if m.mode == "search" {
@@ -162,6 +186,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Trigger search if query changed
 		query := m.textInput.Value()
+		fmt.Printf("DEBUG: Query changed: last='%s', new='%s', len=%d\n", m.lastQuery, query, len(query))
 		if query != m.lastQuery && len(query) >= 2 {
 			m.lastQuery = query
 			m.searchState.Query = query
@@ -217,7 +242,12 @@ func (m *SearchModel) doSearch(query string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		shows, err := m.allanimeClient.SearchShows(ctx, query, 20, 1, "sub")
+		translationType := m.searchState.TranslationType
+		if translationType == "" {
+			translationType = "sub"
+		}
+
+		shows, err := m.allanimeClient.SearchShows(ctx, query, 20, 1, translationType)
 		if err != nil {
 			return SearchErrorMsg{Err: err}
 		}
@@ -297,17 +327,30 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Get episodes from AllAnime
-		episodes, err := m.allanimeClient.GetShowEpisodes(ctx, showID, "sub")
+		// Get episodes from AllAnime using current translation type
+		translationType := m.searchState.TranslationType
+		if translationType == "" {
+			translationType = "sub"
+		}
+		episodes, err := m.allanimeClient.GetShowEpisodes(ctx, showID, translationType)
 		if err != nil {
 			m.episodeState.Err = err
 			m.episodeState.Loading = false
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
 
-		// Get sub episodes
-		subEpisodes := episodes["sub"]
-		m.episodeState.Episodes = subEpisodes
+		// Get episodes based on translation type (sub or dub)
+		epList, ok := episodes[translationType]
+		if !ok {
+			// Fallback to sub if requested type not available
+			epList, ok = episodes["sub"]
+			if !ok {
+				m.episodeState.Err = fmt.Errorf("no episodes found for %s", translationType)
+				m.episodeState.Loading = false
+				return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: m.episodeState.Err}
+			}
+		}
+		m.episodeState.Episodes = epList
 		m.episodeState.Selected = 0
 
 		// Also fetch episode titles from Jikan if we have MAL ID
@@ -324,7 +367,7 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		m.episodeState.EpisodeTitles = episodeTitles
 		m.episodeState.Loading = false
 
-		return EpisodesLoadedMsg{Episodes: subEpisodes, EpisodeTitles: episodeTitles, Error: nil}
+		return EpisodesLoadedMsg{Episodes: epList, EpisodeTitles: episodeTitles, Error: nil}
 	}
 }
 
@@ -334,6 +377,13 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 	return func() tea.Msg {
 		// Use AllanimeProvider which handles decoding and extraction properly
 		allanimeProvider := allanime.NewAllanimeProvider()
+
+		// Set the current translation type (sub/dub)
+		translationType := m.searchState.TranslationType
+		if translationType == "" {
+			translationType = "sub"
+		}
+		allanimeProvider.SetTranslation(translationType)
 
 		// Create a mock episode with the anime info
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
@@ -372,10 +422,9 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 		Title: fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
 	}
 
-	// Sort streams by priority (like ani-cli does - wixmp, hianime, filemoon, others)
-	sorted := sortStreamsByPriority(streams)
+	fmt.Printf("DEBUG: tryPlayStream - Got %d streams (already sorted by priority)\n", len(streams))
 
-	for _, s := range sorted {
+	for i, s := range streams {
 		// Fix relative URLs
 		url := s.URL
 		if strings.HasPrefix(url, "//") {
@@ -384,51 +433,18 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 
 		opts.Referrer = s.Referer
 
+		fmt.Printf("DEBUG: Trying stream %d: provider=%s, url=%s\n", i, s.Provider, url[:min(80, len(url))])
+
 		// Try to launch
 		if err := p.Launch(url, opts); err == nil {
+			fmt.Printf("DEBUG: Successfully played stream %d: %s\n", i, s.Provider)
 			return s
 		}
+		fmt.Printf("DEBUG: Stream %d failed to play\n", i)
 	}
 
+	fmt.Printf("DEBUG: No streams could be played\n")
 	return nil
-}
-
-// sortStreamsByPriority sorts streams similar to ani-cli: wixmp > hianime > filemoon > others
-func sortStreamsByPriority(streams []*source.Stream) []*source.Stream {
-	priority := map[string]int{
-		"wixmp":        1,
-		"hianime":      2,
-		"filemoon":     3,
-		"vidstreaming": 4,
-		"vid-mp4":      4,
-		"mp4upload":    5,
-		"streamsb":     6,
-		"ok":           7,
-		"streamwish":   8,
-		"default":      9,
-	}
-
-	// Sort by priority
-	sorted := make([]*source.Stream, len(streams))
-	copy(sorted, streams)
-
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			pI := priority[sorted[i].Provider]
-			if pI == 0 {
-				pI = 10
-			}
-			pJ := priority[sorted[j].Provider]
-			if pJ == 0 {
-				pJ = 10
-			}
-			if pI > pJ {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
-
-	return sorted
 }
 
 
@@ -549,11 +565,24 @@ func (m *SearchModel) renderLeftPanelFixed(width int) string {
 		Width(width).
 		Foreground(lipgloss.Color("86"))
 
+	// Header showing sub/dub status and toggle hint
+	transLabel := strings.ToUpper(m.searchState.TranslationType)
+	transColor := "39" // cyan for sub, yellow for dub
+	if m.searchState.TranslationType == "dub" {
+		transColor = "226" // yellow for dub
+	}
+	headerStyle := lipgloss.NewStyle().
+		Width(width).
+		Foreground(lipgloss.Color(transColor)).
+		Bold(true)
+	headerText := headerStyle.Render(fmt.Sprintf("[%s] (Ctrl+T to toggle)", transLabel))
+
 	inputView := inputStyle.Render(m.textInput.View())
 	resultsView := m.viewport.View()
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
+		headerText,
 		inputView,
 		resultsView,
 	)

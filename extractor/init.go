@@ -9,4 +9,6 @@ func init() {
 	Register(NewAnihdplayExtractor())
 	Register(NewVidstreamingExtractor())
 	Register(NewMp4uploadExtractor())
+	Register(NewStreamsbExtractor())
+	Register(NewStreamlareExtractor())
 }

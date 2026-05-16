@@ -14,13 +14,14 @@ type SelectionResult struct {
 
 // SearchState holds the state for the anime search TUI
 type SearchState struct {
-	Query          string
-	Results        []*source.Anime
-	Selected       int
-	Metadata       *MetadataPanel
-	Loading        bool
-	MetadataLoading bool
-	Err            error
+	Query            string
+	Results          []*source.Anime
+	Selected         int
+	Metadata         *MetadataPanel
+	Loading          bool
+	MetadataLoading  bool
+	Err              error
+	TranslationType  string // "sub" or "dub"
 }
 
 // MetadataPanel holds Jikan metadata to display on the right panel
@@ -52,12 +53,13 @@ type EpisodeState struct {
 // NewSearchState creates a new search state
 func NewSearchState() *SearchState {
 	return &SearchState{
-		Query:    "",
-		Results:  nil,
-		Selected: 0,
-		Metadata: nil,
-		Loading:  false,
-		Err:      nil,
+		Query:           "",
+		Results:         nil,
+		Selected:        0,
+		Metadata:        nil,
+		Loading:         false,
+		Err:             nil,
+		TranslationType: "sub", // default to sub
 	}
 }
 

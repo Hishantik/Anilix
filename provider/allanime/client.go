@@ -39,15 +39,19 @@ func NewAllanimeClient() *AllanimeClient {
 
 // Search shows via AllAnime GraphQL
 func (c *AllanimeClient) SearchShows(ctx context.Context, query string, limit int, page int, translationType string) ([]ShowNode, error) {
-	// Use simplified query that works with AllAnime API
-	searchQuery := `query($search: SearchInput) { shows(search: $search) { edges { _id name malId thumbnail availableEpisodes } } }`
+	// Use full query matching ani-cli
+	searchQuery := `query( $search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { edges { _id name malId thumbnail availableEpisodes __typename } }}`
 
 	variables := map[string]interface{}{
 		"search": map[string]interface{}{
-			"allowAdult":   false,
-			"allowUnknown": false,
-			"query":        query,
+			"allowAdult":     false,
+			"allowUnknown":   false,
+			"query":         query,
 		},
+		"limit":          limit,
+		"page":           page,
+		"translationType": translationType,
+		"countryOrigin":  "ALL",
 	}
 
 	resp, err := c.doGraphQL(ctx, searchQuery, variables)
