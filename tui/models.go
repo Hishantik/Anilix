@@ -6,22 +6,30 @@ import (
 	"github.com/anilix/anilix/source"
 )
 
+// TUI state machine states
+type tuiState int
+
+const (
+	searchState tuiState = iota
+	episodesState
+)
+
 // SelectionResult holds the selected anime and episode
 type SelectionResult struct {
 	Anime   *source.Anime
-	Episode string // episode number like "1", "2", etc.
+	Episode string
 }
 
 // SearchState holds the state for the anime search TUI
 type SearchState struct {
-	Query            string
-	Results          []*source.Anime
-	Selected         int
-	Metadata         *MetadataPanel
-	Loading          bool
-	MetadataLoading  bool
-	Err              error
-	TranslationType  string // "sub" or "dub"
+	Query           string
+	Results         []*source.Anime
+	Selected        int
+	Metadata        *MetadataPanel
+	Loading         bool
+	MetadataLoading bool
+	Err             error
+	TranslationType string
 }
 
 // MetadataPanel holds Jikan metadata to display on the right panel
@@ -43,8 +51,8 @@ type MetadataPanel struct {
 // EpisodeState holds the state for episode selection
 type EpisodeState struct {
 	AnimeID       string
-	Episodes      []string // episode numbers from AllAnime
-	EpisodeTitles []string // episode titles from Jikan
+	Episodes      []string
+	EpisodeTitles []string
 	Selected      int
 	Loading       bool
 	Err           error
@@ -59,7 +67,7 @@ func NewSearchState() *SearchState {
 		Metadata:        nil,
 		Loading:         false,
 		Err:             nil,
-		TranslationType: "sub", // default to sub
+		TranslationType: "sub",
 	}
 }
 

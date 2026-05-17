@@ -11,196 +11,198 @@ import (
 	"github.com/anilix/anilix/provider/jikan"
 	"github.com/anilix/anilix/source"
 	"github.com/anilix/anilix/player"
+	"github.com/anilix/anilix/tui/style"
+
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// SearchModel is the main model for anime search TUI
-type SearchModel struct {
-	// Search state
-	searchState *SearchState
-	episodeState *EpisodeState
+var (
+	paddingStyle       = lipgloss.NewStyle().Padding(1, 2)
+	subDubPaddingStyle = lipgloss.NewStyle().Padding(0, 1)
+)
 
-	// UI components
-	textInput   textinput.Model
-	viewport    viewport.Model
-
-	// API clients
-	allanimeClient   *allanime.AllanimeClient
-	jikanClient      *jikan.JikanClient
-	allanimeProvider *allanime.AllanimeProvider // Reused provider with translation set
-
-	// Mode: "search" or "episodes"
-	mode string
-
-	// Result
-	selectedResult *SelectionResult
-
-	// Debounce
-	lastQuery string
-
-	// Window dimensions
-	width  int
-	height int
+type animeItem struct {
+	anime *source.Anime
 }
 
-// NewSearchModel creates a new search model
+func (i animeItem) Title() string       { return i.anime.Name }
+func (i animeItem) Description() string { return "" }
+func (i animeItem) FilterValue() string { return i.anime.Name }
+
+type episodeItem struct {
+	number string
+	title  string
+}
+
+func (i episodeItem) Title() string       { return fmt.Sprintf("Episode %s", i.number) }
+func (i episodeItem) Description() string { return i.title }
+func (i episodeItem) FilterValue() string { return i.number }
+
+type SearchModel struct {
+	state tuiState
+
+	searchState  *SearchState
+	episodeState *EpisodeState
+
+	textInput textinput.Model
+	help      help.Model
+	keymap    keymap
+
+	searchList  list.Model
+	episodeList list.Model
+
+	allanimeClient   *allanime.AllanimeClient
+	jikanClient      *jikan.JikanClient
+	allanimeProvider *allanime.AllanimeProvider
+
+	selectedResult *SelectionResult
+	lastQuery      string
+
+	width     int
+	height    int
+	listWidth int
+
+	prevSearchListIndex int
+}
+
 func NewSearchModel() *SearchModel {
 	ti := textinput.New()
 	ti.Placeholder = "Search anime..."
 	ti.Focus()
 	ti.Prompt = "> "
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#F2BB05"))
+	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#E2294F"))
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#3D348B"))
 
-	vp := viewport.New(60, 20)
-
-	// Create provider with default translation
 	allanimeProvider := allanime.NewAllanimeProvider()
 	allanimeProvider.SetTranslation("sub")
 
+	help := help.New()
+	help.Styles.ShortKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#F2BB05"))
+	help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#B6C2D9"))
+	help.Styles.FullKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#F2BB05"))
+	help.Styles.FullDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#B6C2D9"))
+
+	km := newKeymap()
+
+	searchList := makeList("Search Results", km)
+	episodeList := makeList("Episodes", km)
+
 	return &SearchModel{
-		searchState:       NewSearchState(),
-		episodeState:      NewEpisodeState(),
-		textInput:         ti,
-		viewport:          vp,
-		allanimeClient:    allanime.NewAllanimeClient(),
-		jikanClient:       jikan.NewClient("https://api.jikan.moe/v4"),
-		allanimeProvider:  allanimeProvider,
-		mode:              "search",
-		lastQuery:         "",
+		state:            searchState,
+		searchState:      NewSearchState(),
+		episodeState:     NewEpisodeState(),
+		textInput:        ti,
+		help:             help,
+		keymap:           km,
+		searchList:       searchList,
+		episodeList:      episodeList,
+		allanimeClient:   allanime.NewAllanimeClient(),
+		jikanClient:      jikan.NewClient("https://api.jikan.moe/v4"),
+		allanimeProvider: allanimeProvider,
+		lastQuery:        "",
 	}
 }
 
-// Init initializes the model
 func (m *SearchModel) Init() tea.Cmd {
 	return nil
 }
 
-// Update handles messages
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.resize(msg.Width, msg.Height)
+		return m, nil
+
 	case tea.KeyMsg:
-		// Handle navigation keys first (before textinput)
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			if m.mode == "episodes" {
-				// Go back to search mode
-				m.mode = "search"
-				m.textInput.Placeholder = "Search anime..."
-				m.episodeState = NewEpisodeState()
-				m.textInput.Focus() // Re-focus text input for search
-				m.updateViewport()
-				cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
-				return m, tea.Batch(cmds...)
-			}
+		switch {
+		case key.Matches(msg, m.keymap.Quit):
 			return m, tea.Quit
 
-		case "up", "k":
-			if m.mode == "episodes" {
-				if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected > 0 {
-					m.episodeState.Selected--
-					m.updateEpisodesViewport()
-					cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
-				}
-			} else {
-				if len(m.searchState.Results) > 0 && m.searchState.Selected > 0 {
-					m.searchState.Selected--
-					cmds = append(cmds, m.fetchMetadata())
-					m.updateViewport()
-				}
+		case key.Matches(msg, m.keymap.Back):
+			if m.state == episodesState {
+				m.state = searchState
+				m.episodeState = NewEpisodeState()
+				m.textInput.Focus()
+				return m, nil
 			}
-			return m, tea.Batch(cmds...)
 
-		case "down", "j":
-			if m.mode == "episodes" {
-				if m.episodeState.Selected < len(m.episodeState.Episodes)-1 {
-					m.episodeState.Selected++
-					m.updateEpisodesViewport()
-					cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
-				}
-			} else {
-				if m.searchState.Selected < len(m.searchState.Results)-1 {
-					m.searchState.Selected++
-					cmds = append(cmds, m.fetchMetadata())
-					m.updateViewport()
-				}
-			}
-			return m, tea.Batch(cmds...)
-
-		case "ctrl+t":
-			// Toggle between sub and dub (Ctrl+T)
+		case key.Matches(msg, m.keymap.Toggle):
 			if m.searchState.TranslationType == "sub" {
 				m.searchState.TranslationType = "dub"
 			} else {
 				m.searchState.TranslationType = "sub"
 			}
-			m.textInput.Placeholder = "Search anime..."
 
-			// If in episodes mode, re-fetch episodes with new translation type
-			if m.mode == "episodes" && m.episodeState.AnimeID != "" {
+			if m.state == episodesState && m.episodeState.AnimeID != "" {
 				selectedAnime := m.searchState.Results[m.searchState.Selected]
 				if selectedAnime != nil {
 					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AnimeID, selectedAnime.MALID))
 				}
 			} else if m.lastQuery != "" {
-				// Re-search if we have a query
 				cmds = append(cmds, m.doSearch(m.lastQuery))
 			}
-
-			m.updateViewport()
-			cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
 			return m, tea.Batch(cmds...)
 
-		case "enter":
-			if m.mode == "search" {
-				// Switch to episode mode
+		case key.Matches(msg, m.keymap.Select):
+			if m.state == searchState {
+				m.searchState.Selected = m.searchList.Index()
 				if len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
 					anime := m.searchState.Results[m.searchState.Selected]
 					if anime.AllAnimeID != "" {
-						m.mode = "episodes"
+						m.state = episodesState
 						m.episodeState.AnimeID = anime.AllAnimeID
-						m.textInput.Placeholder = "Select episode..."
-						m.textInput.Reset()
-						m.textInput.Blur() // Lose focus so Enter key isn't captured
+						m.textInput.Blur()
 						cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
 						return m, tea.Batch(cmds...)
 					}
 				}
-			} else if m.mode == "episodes" {
-			// Play the selected episode
-			if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
-				selectedAnime := m.searchState.Results[m.searchState.Selected]
-				selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
-
-				// Fetch sources and play
-				cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name))
-				return m, tea.Batch(cmds...)
+			} else if m.state == episodesState {
+				m.episodeState.Selected = m.episodeList.Index()
+				if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
+					selectedAnime := m.searchState.Results[m.searchState.Selected]
+					selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
+					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name))
+					return m, tea.Batch(cmds...)
+				}
 			}
-			return m, nil
-		}
-			return m, nil
 		}
 
-		// Pass other keys (characters) to textinput
-		var cmd tea.Cmd
-		m.textInput, cmd = m.textInput.Update(msg)
-		cmds = append(cmds, cmd)
+		if m.state == searchState {
+			var cmd tea.Cmd
+			m.textInput, cmd = m.textInput.Update(msg)
+			cmds = append(cmds, cmd)
 
-		// Trigger search if query changed
-		query := m.textInput.Value()
-		if query != m.lastQuery && len(query) >= 2 {
-			m.lastQuery = query
-			m.searchState.Query = query
-			cmds = append(cmds, m.doSearch(query))
+			query := m.textInput.Value()
+			if query != m.lastQuery && len(query) >= 2 {
+				m.lastQuery = query
+				m.searchState.Query = query
+				cmds = append(cmds, m.doSearch(query))
+			}
 		}
 
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.updateViewport()
+		if m.state == searchState && len(m.searchState.Results) > 0 {
+			var cmd tea.Cmd
+			m.searchList, cmd = m.searchList.Update(msg)
+			cmds = append(cmds, cmd)
+			if m.searchList.Index() != m.prevSearchListIndex {
+				m.prevSearchListIndex = m.searchList.Index()
+				m.searchState.Selected = m.searchList.Index()
+				cmds = append(cmds, m.fetchMetadata())
+			}
+		} else if m.state == episodesState && len(m.episodeState.Episodes) > 0 {
+			var cmd tea.Cmd
+			m.episodeList, cmd = m.episodeList.Update(msg)
+			cmds = append(cmds, cmd)
+			m.episodeState.Selected = m.episodeList.Index()
+		}
 
 	case SearchResultsMsg:
 		m.searchState.Results = msg.Results
@@ -209,13 +211,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.Results) > 0 {
 			cmds = append(cmds, m.fetchMetadata())
 		}
-		m.updateViewport()
+		m.updateSearchList()
 
 	case MetadataLoadedMsg:
 		m.searchState.Metadata = msg.Metadata
 		m.searchState.MetadataLoading = false
-		// Force redraw
-		cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
 
 	case EpisodesLoadedMsg:
 		m.episodeState.Episodes = msg.Episodes
@@ -224,21 +224,190 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			m.episodeState.Err = msg.Error
 		}
-		m.updateEpisodesViewport()
+		m.updateEpisodeList()
 
 	case TUIErrorMsg:
-		// Show error in right panel
 		m.episodeState.Err = msg.Err
-
-	case textinput.Model:
-		// This is handled in tea.KeyMsg case above
 	}
-	m.viewport, _ = m.viewport.Update(msg)
 
 	return m, tea.Batch(cmds...)
 }
 
-// doSearch performs the AllAnime search
+func (m *SearchModel) resize(width, height int) {
+	m.width = width
+	m.height = height
+
+	x, y := paddingStyle.GetFrameSize()
+	styledWidth := width - x
+	styledHeight := height - y
+
+	m.listWidth = styledWidth / 2
+	if m.listWidth < 20 {
+		m.listWidth = 20
+	}
+	listHeight := styledHeight - 6
+	if listHeight < 1 {
+		listHeight = 1
+	}
+
+	m.searchList.SetSize(m.listWidth, listHeight)
+	m.episodeList.SetSize(m.listWidth, listHeight)
+	m.textInput.Width = styledWidth / 2
+	m.help.Width = styledWidth
+}
+
+func (m *SearchModel) View() string {
+	if m.width == 0 || m.height == 0 {
+		return "Loading..."
+	}
+
+	var content string
+
+	switch m.state {
+	case searchState:
+		content = m.viewSearchState()
+	case episodesState:
+		content = m.viewEpisodesState()
+	}
+
+	return m.renderContent(content)
+}
+
+func (m *SearchModel) viewSearchState() string {
+	panelWidth := m.listWidth
+
+	leftPanel := m.renderLeftPanel(panelWidth)
+	rightPanel := m.renderRightPanel(panelWidth)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+}
+
+func (m *SearchModel) viewEpisodesState() string {
+	panelWidth := m.listWidth
+
+	leftPanel := m.renderEpisodeLeftPanel(panelWidth)
+	rightPanel := m.renderEpisodeRightPanel(panelWidth)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+}
+
+func (m *SearchModel) renderLeftPanel(width int) string {
+	var lines []string
+
+	switchText := renderTextSwitch(m.searchState.TranslationType)
+	lines = append(lines, subDubPaddingStyle.Render(switchText))
+	lines = append(lines, m.textInput.View())
+	lines = append(lines, "")
+	lines = append(lines, m.searchList.View())
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *SearchModel) renderRightPanel(width int) string {
+	if m.searchState.MetadataLoading {
+		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#7D1128")).Render("Loading metadata..."))
+	}
+
+	if m.searchState.Metadata == nil {
+		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#7D1128")).Render("Select an anime"))
+	}
+
+	return paddingStyle.Render(strings.Join(m.renderMetadata(), "\n"))
+}
+
+func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
+	var lines []string
+
+	switchText := renderTextSwitch(m.searchState.TranslationType)
+	lines = append(lines, subDubPaddingStyle.Render(switchText))
+	lines = append(lines, "")
+	lines = append(lines, m.episodeList.View())
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *SearchModel) renderEpisodeRightPanel(width int) string {
+	if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
+		selectedEp := m.episodeState.Episodes[m.episodeState.Selected]
+		var selectedTitle string
+		if len(m.episodeState.EpisodeTitles) > m.episodeState.Selected {
+			selectedTitle = m.episodeState.EpisodeTitles[m.episodeState.Selected]
+		}
+		if selectedTitle != "" {
+			return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render(fmt.Sprintf("Episode %s: %s", selectedEp, selectedTitle)))
+		}
+		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render(fmt.Sprintf("Episode %s", selectedEp)))
+	}
+	return paddingStyle.Render(style.Faint("No episodes"))
+}
+
+func (m *SearchModel) renderMetadata() []string {
+	meta := m.searchState.Metadata
+	var lines []string
+
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render(meta.Title))
+
+	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#C41E3D")).Italic(true).Render(meta.TitleEnglish))
+	}
+
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#E2294F")).Render(fmt.Sprintf("Type: %s | Year: %d | Episodes: %d", meta.Type, meta.Year, meta.Episodes)))
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#E2294F")).Render(fmt.Sprintf("Status: %s", meta.Status)))
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#E2294F")).Render(fmt.Sprintf("Score: %.2f | Rank: #%d", meta.Score, meta.Rank)))
+
+	if len(meta.Genres) > 0 {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#C41E3D")).Render(fmt.Sprintf("Genres: %s", strings.Join(meta.Genres, ", "))))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render("Synopsis:"))
+	lines = append(lines, style.Faint(truncateSynopsis(meta.Synopsis, 300)))
+
+	return lines
+}
+
+func (m *SearchModel) renderContent(content string) string {
+	if m.height <= 0 {
+		return ""
+	}
+
+	h := strings.Count(content, "\n") + 1
+	helpView := m.help.View(m.keymap)
+	remaining := m.height - h - 2
+	if remaining < 0 {
+		remaining = 0
+	}
+	return content + strings.Repeat("\n", remaining) + helpView
+}
+
+func (m *SearchModel) updateSearchList() {
+	items := make([]list.Item, 0, len(m.searchState.Results))
+	for _, anime := range m.searchState.Results {
+		items = append(items, animeItem{anime: anime})
+	}
+	cmd := m.searchList.SetItems(items)
+	if cmd != nil {
+		cmd()
+	}
+	m.searchList.Select(m.searchState.Selected)
+}
+
+func (m *SearchModel) updateEpisodeList() {
+	items := make([]list.Item, 0, len(m.episodeState.Episodes))
+	for i, ep := range m.episodeState.Episodes {
+		title := ""
+		if len(m.episodeState.EpisodeTitles) > i {
+			title = m.episodeState.EpisodeTitles[i]
+		}
+		items = append(items, episodeItem{number: ep, title: title})
+	}
+	cmd := m.episodeList.SetItems(items)
+	if cmd != nil {
+		cmd()
+	}
+	m.episodeList.Select(m.episodeState.Selected)
+}
+
 func (m *SearchModel) doSearch(query string) tea.Cmd {
 	return func() tea.Msg {
 		m.searchState.Loading = true
@@ -266,7 +435,6 @@ func (m *SearchModel) doSearch(query string) tea.Cmd {
 	}
 }
 
-// fetchMetadata fetches Jikan metadata for the selected anime
 func (m *SearchModel) fetchMetadata() tea.Cmd {
 	if m.searchState.Selected >= len(m.searchState.Results) {
 		m.searchState.Metadata = nil
@@ -279,7 +447,7 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 	if anime.MALID == 0 {
 		m.searchState.Metadata = nil
 		m.searchState.MetadataLoading = false
-		return nil // No MAL ID, skip metadata
+		return nil
 	}
 
 	m.searchState.MetadataLoading = true
@@ -290,7 +458,6 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 
 		data, err := m.jikanClient.GetAnime(ctx, anime.MALID)
 		if err != nil {
-			// On error, still set loading to false
 			return MetadataLoadedMsg{Metadata: nil}
 		}
 
@@ -323,7 +490,6 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 	}
 }
 
-// fetchEpisodes fetches episode list for the selected anime
 func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 	m.episodeState.Loading = true
 
@@ -331,7 +497,6 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Get episodes from AllAnime using current translation type
 		translationType := m.searchState.TranslationType
 		if translationType == "" {
 			translationType = "sub"
@@ -343,10 +508,8 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
 
-		// Get episodes based on translation type (sub or dub)
 		epList, ok := episodes[translationType]
 		if !ok {
-			// Fallback to sub if requested type not available
 			epList, ok = episodes["sub"]
 			if !ok {
 				m.episodeState.Err = fmt.Errorf("no episodes found for %s", translationType)
@@ -357,7 +520,6 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		m.episodeState.Episodes = epList
 		m.episodeState.Selected = 0
 
-		// Also fetch episode titles from Jikan if we have MAL ID
 		var episodeTitles []string
 		if malID > 0 {
 			jikanEpisodes, err := m.jikanClient.GetEpisodes(ctx, malID)
@@ -375,20 +537,14 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 	}
 }
 
-
-// playEpisode fetches sources and plays the selected episode
 func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd {
 	return func() tea.Msg {
-		// Use stored provider (already has translation set)
-
-		// Set the current translation type (sub/dub)
 		translationType := m.searchState.TranslationType
 		if translationType == "" {
 			translationType = "sub"
 		}
 		m.allanimeProvider.SetTranslation(translationType)
 
-		// Create a mock episode with the anime info
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
 		episode := &source.Episode{
 			Number: episodeNumFloat,
@@ -398,7 +554,6 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 			},
 		}
 
-		// Get streams using the provider (handles decoding, extraction properly)
 		streams, err := m.allanimeProvider.StreamsOf(episode)
 		if err != nil {
 			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err)}
@@ -408,7 +563,6 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 			return TUIErrorMsg{Err: fmt.Errorf("no streams found")}
 		}
 
-		// Try each stream until one works (like ani-cli does)
 		playStream := tryPlayStream(streams, animeTitle, episodeNum)
 		if playStream == nil {
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
@@ -418,7 +572,6 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 	}
 }
 
-// tryPlayStream tries each stream in order until one plays successfully
 func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *source.Stream {
 	p := player.Mpv
 	opts := player.Options{
@@ -426,7 +579,6 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 	}
 
 	for _, s := range streams {
-		// Fix relative URLs
 		url := s.URL
 		if strings.HasPrefix(url, "//") {
 			url = "https:" + url
@@ -434,7 +586,6 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 
 		opts.Referrer = s.Referer
 
-		// Try to launch
 		if err := p.Launch(url, opts); err == nil {
 			return s
 		}
@@ -443,189 +594,73 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 	return nil
 }
 
+func makeList(title string, km keymap) list.Model {
+	delegate := list.NewDefaultDelegate()
 
-// updateViewport updates the viewport content
-func (m *SearchModel) updateViewport() {
-	if m.mode == "episodes" {
-		m.updateEpisodesViewport()
-		return
-	}
+	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+		Border(lipgloss.ThickBorder(), false, false, false, true).
+		BorderForeground(lipgloss.Color("#F2BB05")).
+		Foreground(lipgloss.Color("#F2BB05")).
+		Padding(0, 0, 0, 1)
 
-	if len(m.searchState.Results) == 0 {
-		m.viewport.SetContent("Start typing to search anime...")
-		return
-	}
+	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
+		Border(lipgloss.ThickBorder(), false, false, false, true).
+		BorderForeground(lipgloss.Color("#F2BB05")).
+		Foreground(lipgloss.Color("#B6C2D9")).
+		Padding(0, 0, 0, 1)
 
-	var b strings.Builder
-	for i, anime := range m.searchState.Results {
-		prefix := "  "
-		if i == m.searchState.Selected {
-			prefix = ">"
-		}
+	delegate.Styles.NormalTitle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#B6C2D9")).
+		Padding(0, 0, 0, 1)
 
-		title := anime.Name
-		if len(title) > 50 {
-			title = title[:50] + "..."
-		}
+	delegate.Styles.NormalDesc = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#3D348B")).
+		Padding(0, 0, 0, 1)
 
-		b.WriteString(fmt.Sprintf("%s %s\n", prefix, title))
-	}
-
-	m.viewport.SetContent(b.String())
-}
-
-// updateEpisodesViewport updates the viewport for episode selection
-func (m *SearchModel) updateEpisodesViewport() {
-	if len(m.episodeState.Episodes) == 0 {
-		m.viewport.SetContent("Loading episodes...")
-		return
-	}
-
-	var b strings.Builder
-	for i, ep := range m.episodeState.Episodes {
-		prefix := "  "
-		if i == m.episodeState.Selected {
-			prefix = ">"
-		}
-
-		// Show title if available, otherwise just episode number
-		if len(m.episodeState.EpisodeTitles) > i && m.episodeState.EpisodeTitles[i] != "" {
-			title := m.episodeState.EpisodeTitles[i]
-			if len(title) > 40 {
-				title = title[:40] + "..."
-			}
-			b.WriteString(fmt.Sprintf("%s Ep %s: %s\n", prefix, ep, title))
-		} else {
-			b.WriteString(fmt.Sprintf("%s Episode %s\n", prefix, ep))
-		}
-	}
-
-	m.viewport.SetContent(b.String())
-}
-
-// View renders the UI
-func (m *SearchModel) View() string {
-	// Calculate widths
-	panelWidth := m.width / 2
-	if panelWidth < 40 {
-		panelWidth = 40
-	}
-
-	// Left side - search input and results list
-	leftPanel := m.renderLeftPanelFixed(panelWidth)
-
-	// Right side - depends on mode
-	var rightPanel string
-	if m.mode == "episodes" {
-		rightPanel = m.renderEpisodesRightPanel(panelWidth)
-	} else {
-		rightPanel = m.renderRightPanelFixed(panelWidth)
-	}
-
-	// Combine with fixed widths
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		leftPanel,
-		rightPanel,
-	)
-}
-
-// renderEpisodesRightPanel renders the right panel for episode selection
-func (m *SearchModel) renderEpisodesRightPanel(width int) string {
-	if m.episodeState.Loading {
-		return loadingStyle.Width(width).Render("Loading episodes...")
-	}
-
-	if len(m.episodeState.Episodes) == 0 {
-		return metadataPanelStyle.Width(width).Render("No episodes found")
-	}
-
-	selectedEp := m.episodeState.Episodes[m.episodeState.Selected]
-	selectedTitle := ""
-	if len(m.episodeState.EpisodeTitles) > m.episodeState.Selected {
-		selectedTitle = m.episodeState.EpisodeTitles[m.episodeState.Selected]
-	}
-
-	var content string
-	if selectedTitle != "" {
-		content = fmt.Sprintf("Episode: %s\nTitle: %s\n\nUse ↑/↓ to navigate\nPress Enter to play", selectedEp, selectedTitle)
-	} else {
-		content = fmt.Sprintf("Episode: %s\n\nUse ↑/↓ to navigate\nPress Enter to play", selectedEp)
-	}
-
-	return metadataPanelStyle.Width(width).Render(content)
-}
-
-func (m *SearchModel) renderLeftPanelFixed(width int) string {
-	inputStyle := lipgloss.NewStyle().
-		Width(width).
-		Foreground(lipgloss.Color("86"))
-
-	// Header showing sub/dub status and toggle hint
-	transLabel := strings.ToUpper(m.searchState.TranslationType)
-	transColor := "39" // cyan for sub, yellow for dub
-	if m.searchState.TranslationType == "dub" {
-		transColor = "226" // yellow for dub
-	}
-	headerStyle := lipgloss.NewStyle().
-		Width(width).
-		Foreground(lipgloss.Color(transColor)).
+	l := list.New([]list.Item{}, delegate, 0, 0)
+	l.Title = title
+	l.Styles.Title = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F2BB05")).
+		Background(lipgloss.Color("#3D348B")).
+		Padding(0, 1).
 		Bold(true)
-	headerText := headerStyle.Render(fmt.Sprintf("[%s] (Ctrl+T to toggle)", transLabel))
-
-	inputView := inputStyle.Render(m.textInput.View())
-	resultsView := m.viewport.View()
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		headerText,
-		inputView,
-		resultsView,
-	)
-}
-
-func (m *SearchModel) renderRightPanelFixed(width int) string {
-	if m.searchState.MetadataLoading {
-		return loadingStyle.Width(width).Render("Loading metadata...")
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	l.KeyMap = list.KeyMap{
+		CursorUp:   km.Up,
+		CursorDown: km.Down,
 	}
 
-	if m.searchState.Metadata == nil {
-		return metadataPanelStyle.Width(width).Render("Select an anime")
-	}
-
-	meta := m.searchState.Metadata
-
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render(meta.Title) + "\n")
-
-	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
-		b.WriteString(italicStyle.Render(meta.TitleEnglish) + "\n")
-	}
-
-	b.WriteString(fmt.Sprintf("Type: %s | Year: %d | Episodes: %d\n", meta.Type, meta.Year, meta.Episodes))
-	b.WriteString(fmt.Sprintf("Status: %s\n", meta.Status))
-	b.WriteString(fmt.Sprintf("Score: %.2f | Rank: #%d\n", meta.Score, meta.Rank))
-
-	if len(meta.Genres) > 0 {
-		b.WriteString(fmt.Sprintf("Genres: %s\n", strings.Join(meta.Genres, ", ")))
-	}
-
-	b.WriteString("\nSynopsis:\n")
-	b.WriteString(synopsisStyle.Render(meta.Synopsis))
-
-	return metadataPanelStyle.Width(width).Render(b.String())
+	return l
 }
 
-func (m *SearchModel) renderLeftPanel() string {
-	return m.renderLeftPanelFixed(40)
+func renderTextSwitch(translationType string) string {
+	var subPart, dubPart string
+	if translationType == "sub" {
+		subPart = style.SubTitle("SUB")
+		dubPart = style.Faint("DUB")
+	} else {
+		subPart = style.Faint("SUB")
+		dubPart = style.DubTitle("DUB")
+	}
+
+	separator := style.Faint(" / ")
+	inner := lipgloss.JoinHorizontal(lipgloss.Top, subPart, separator, dubPart)
+
+	return inner
 }
 
-func (m *SearchModel) renderRightPanel() string {
-	return m.renderRightPanelFixed(40)
+func truncateSynopsis(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	lastSpace := strings.LastIndex(s[:maxLen], " ")
+	if lastSpace == -1 {
+		return s[:maxLen] + "..."
+	}
+	return s[:lastSpace] + "..."
 }
 
-// Message types
 type SearchResultsMsg struct {
 	Results []*source.Anime
 }
@@ -640,7 +675,6 @@ type EpisodesLoadedMsg struct {
 	Error         error
 }
 
-// TUIErrorMsg is used for various TUI errors
 type TUIErrorMsg struct {
 	Err error
 }
@@ -649,44 +683,6 @@ type SearchErrorMsg struct {
 	Err error
 }
 
-// Helper functions
-func truncateSynopsis(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	// Find last space before maxLen
-	lastSpace := strings.LastIndex(s[:maxLen], " ")
-	if lastSpace == -1 {
-		return s[:maxLen] + "..."
-	}
-	return s[:lastSpace] + "..."
-}
-
-// Styles
-var (
-	metadataPanelStyle = lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("240")).
-				Padding(1, 2)
-
-	loadingStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(1, 2)
-
-	titleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("86")).
-			Bold(true)
-
-	italicStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Italic(true)
-
-	synopsisStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
-)
-
-// RunSearch launches the interactive anime search and returns selected anime and episode
 func RunSearch() (*SelectionResult, error) {
 	model := NewSearchModel()
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -699,7 +695,6 @@ func RunSearch() (*SelectionResult, error) {
 	return model.selectedResult, nil
 }
 
-// GetSelectedAnime returns the currently selected anime
 func (m *SearchModel) GetSelectedAnime() *source.Anime {
 	if m.searchState.Selected < len(m.searchState.Results) {
 		return m.searchState.Results[m.searchState.Selected]
