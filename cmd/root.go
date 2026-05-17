@@ -3,10 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/anilix/anilix/config"
-	"github.com/anilix/anilix/inline"
 	"github.com/anilix/anilix/tui"
 	"github.com/spf13/cobra"
 )
@@ -15,7 +13,7 @@ var rootCmd = &cobra.Command{
 	Use:   "anilix",
 	Short: "Anime streaming CLI",
 	Long:  `Anilix - Stream anime from your terminal`,
-	Run:   runInline,
+	Run:   runTUI,
 	Args:  cobra.RangeArgs(0, 1),
 }
 
@@ -50,19 +48,6 @@ func runTUI(cmd *cobra.Command, args []string) {
 		os.Exit(0)
 	}
 	fmt.Printf("Selected: %s (MAL ID: %d, Episode: %s)\n", result.Anime.Name, result.Anime.MALID, result.Episode)
-}
-
-func runInline(cmd *cobra.Command, args []string) {
-	query := ""
-	if len(args) > 0 {
-		query = strings.Join(args, " ")
-	}
-
-	mode := inline.New()
-	if err := mode.Run(query); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 }
 
 func main() {

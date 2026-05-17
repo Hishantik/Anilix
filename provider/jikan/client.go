@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sync"
 	"time"
+
+	"github.com/anilix/anilix/curl"
+)
+
+const (
+	jikanBaseURL = "https://api.jikan.moe/v4"
+	RateLimit    = 3 // requests per second
 )
 
 type JikanClient struct {
 	baseURL     string
-	httpClient  *http.Client
 	rateLimiter *rateLimiter
 	cache       map[int]*AnimeData
 	cacheMu     sync.RWMutex
@@ -59,12 +63,12 @@ func (r *rateLimiter) waitForToken() {
 }
 
 func NewClient(baseURL string) *JikanClient {
+	if baseURL == "" {
+		baseURL = jikanBaseURL
+	}
 	return &JikanClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		rateLimiter: newRateLimiter(3, time.Second),
+		baseURL:     baseURL,
+		rateLimiter: newRateLimiter(RateLimit, time.Second),
 		cache:       make(map[int]*AnimeData),
 	}
 }
@@ -72,29 +76,20 @@ func NewClient(baseURL string) *JikanClient {
 func (c *JikanClient) SearchAnime(ctx context.Context, query string) (*AnimeResponse, error) {
 	c.rateLimiter.waitForToken()
 
-	url := fmt.Sprintf("%s/anime?q=%s&limit=20", c.baseURL, url.QueryEscape(query))
+	url := fmt.Sprintf("%s/anime?q=%s&limit=20", c.baseURL, query)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 {
-		return nil, fmt.Errorf("rate limited by Jikan API")
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Jikan API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("curl failed: %w", err)
 	}
 
 	var result AnimeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -115,27 +110,18 @@ func (c *JikanClient) GetAnime(ctx context.Context, malID int) (*AnimeData, erro
 
 	url := fmt.Sprintf("%s/anime/%d", c.baseURL, malID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 {
-		return nil, fmt.Errorf("rate limited by Jikan API")
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Jikan API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("curl failed: %w", err)
 	}
 
 	var result AnimeSingleResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -153,27 +139,18 @@ func (c *JikanClient) GetEpisodes(ctx context.Context, malID int) ([]Episode, er
 
 	url := fmt.Sprintf("%s/anime/%d/episodes", c.baseURL, malID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 {
-		return nil, fmt.Errorf("rate limited by Jikan API")
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Jikan API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("curl failed: %w", err)
 	}
 
 	var result EpisodesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 

@@ -4,20 +4,16 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/anilix/anilix/cache"
 	"github.com/anilix/anilix/source"
 )
 
-type AnimeLinker struct {
-	cache *cache.MALIDCache
-}
+type AnimeLinker struct{}
 
 func NewAnimeLinker() *AnimeLinker {
-	c, _ := cache.NewMALIDCache() // ignore error - cache is optional
-	return &AnimeLinker{cache: c}
+	return &AnimeLinker{}
 }
 
-// ResolveAllAnimeID resolves MAL ID to AllAnime ID using cache and AllAnime search
+// ResolveAllAnimeID resolves MAL ID to AllAnime ID via AllAnime search
 func (l *AnimeLinker) ResolveAllAnimeID(ctx context.Context, anime *source.Anime, AllanimeSrc source.Source) (string, error) {
 	if anime == nil {
 		return "", fmt.Errorf("anime is nil")
@@ -27,26 +23,15 @@ func (l *AnimeLinker) ResolveAllAnimeID(ctx context.Context, anime *source.Anime
 		return "", fmt.Errorf("anime has no MAL ID")
 	}
 
-	// 1. Check cache first
-	if l.cache != nil {
-		if cachedID, err := l.cache.Get(anime.MALID); err == nil && cachedID != "" {
-			return cachedID, nil
-		}
-	}
-
-	// 2. Search AllAnime with same name query
+	// Search AllAnime with same name query
 	results, err := AllanimeSrc.Search(anime.Name)
 	if err != nil {
 		return "", fmt.Errorf("AllAnime search failed: %w", err)
 	}
 
-	// 3. Match by MAL ID
+	// Match by MAL ID
 	for _, r := range results {
 		if r.MALID == anime.MALID {
-			// 4. Cache the result
-			if l.cache != nil {
-				l.cache.Set(anime.MALID, r.AllAnimeID)
-			}
 			return r.AllAnimeID, nil
 		}
 	}

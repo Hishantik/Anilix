@@ -345,10 +345,10 @@ func (c *AllanimeClient) doGraphQLCurlPersisted(ctx context.Context, reqBody []b
 
 	apiURL := c.baseURL + "?variables=" + encodedVars + "&extensions=" + encodedExt
 
-	// Try with different referer (ani-cli uses youtu-chan.com as fallback)
+	// Try with different referer (ani-cli uses youtu-chan.com first)
 	referers := []string{
-		"https://allmanga.to",
 		"https://youtu-chan.com",
+		"https://allmanga.to",
 	}
 
 	for _, referer := range referers {

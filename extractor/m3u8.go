@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/anilix/anilix/curl"
 )
 
 // M3U8Variant represents a quality variant in an m3u8 playlist
@@ -14,6 +16,20 @@ type M3U8Variant struct {
 	URL       string
 	Quality   string
 	Bandwidth int
+}
+
+// ParseMasterPlaylistCurl parses a master m3u8 via curl
+func ParseMasterPlaylistCurl(ctx context.Context, url string) ([]M3U8Variant, error) {
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+	}
+
+	body, err := curl.Get(ctx, url, headers)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch m3u8: %w", err)
+	}
+
+	return ParseM3U8(body, url), nil
 }
 
 // ParseMasterPlaylist parses a master m3u8 and returns quality variants

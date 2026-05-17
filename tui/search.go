@@ -28,8 +28,9 @@ type SearchModel struct {
 	viewport    viewport.Model
 
 	// API clients
-	allanimeClient *allanime.AllanimeClient
-	jikanClient    *jikan.JikanClient
+	allanimeClient   *allanime.AllanimeClient
+	jikanClient      *jikan.JikanClient
+	allanimeProvider *allanime.AllanimeProvider // Reused provider with translation set
 
 	// Mode: "search" or "episodes"
 	mode string
@@ -54,15 +55,20 @@ func NewSearchModel() *SearchModel {
 
 	vp := viewport.New(60, 20)
 
+	// Create provider with default translation
+	allanimeProvider := allanime.NewAllanimeProvider()
+	allanimeProvider.SetTranslation("sub")
+
 	return &SearchModel{
-		searchState:    NewSearchState(),
-		episodeState:   NewEpisodeState(),
-		textInput:      ti,
-		viewport:       vp,
-		allanimeClient: allanime.NewAllanimeClient(),
-		jikanClient:    jikan.NewClient("https://api.jikan.moe/v4"),
-		mode:           "search",
-		lastQuery:      "",
+		searchState:       NewSearchState(),
+		episodeState:      NewEpisodeState(),
+		textInput:         ti,
+		viewport:          vp,
+		allanimeClient:    allanime.NewAllanimeClient(),
+		jikanClient:       jikan.NewClient("https://api.jikan.moe/v4"),
+		allanimeProvider:  allanimeProvider,
+		mode:              "search",
+		lastQuery:         "",
 	}
 }
 
@@ -149,7 +155,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 
 		case "enter":
-			fmt.Printf("DEBUG: Enter pressed, mode=%s\n", m.mode)
 			if m.mode == "search" {
 				// Switch to episode mode
 				if len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
@@ -186,7 +191,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Trigger search if query changed
 		query := m.textInput.Value()
-		fmt.Printf("DEBUG: Query changed: last='%s', new='%s', len=%d\n", m.lastQuery, query, len(query))
 		if query != m.lastQuery && len(query) >= 2 {
 			m.lastQuery = query
 			m.searchState.Query = query
@@ -375,15 +379,14 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 // playEpisode fetches sources and plays the selected episode
 func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd {
 	return func() tea.Msg {
-		// Use AllanimeProvider which handles decoding and extraction properly
-		allanimeProvider := allanime.NewAllanimeProvider()
+		// Use stored provider (already has translation set)
 
 		// Set the current translation type (sub/dub)
 		translationType := m.searchState.TranslationType
 		if translationType == "" {
 			translationType = "sub"
 		}
-		allanimeProvider.SetTranslation(translationType)
+		m.allanimeProvider.SetTranslation(translationType)
 
 		// Create a mock episode with the anime info
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
@@ -396,7 +399,7 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 		}
 
 		// Get streams using the provider (handles decoding, extraction properly)
-		streams, err := allanimeProvider.StreamsOf(episode)
+		streams, err := m.allanimeProvider.StreamsOf(episode)
 		if err != nil {
 			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err)}
 		}
@@ -422,9 +425,7 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 		Title: fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
 	}
 
-	fmt.Printf("DEBUG: tryPlayStream - Got %d streams (already sorted by priority)\n", len(streams))
-
-	for i, s := range streams {
+	for _, s := range streams {
 		// Fix relative URLs
 		url := s.URL
 		if strings.HasPrefix(url, "//") {
@@ -433,17 +434,12 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 
 		opts.Referrer = s.Referer
 
-		fmt.Printf("DEBUG: Trying stream %d: provider=%s, url=%s\n", i, s.Provider, url[:min(80, len(url))])
-
 		// Try to launch
 		if err := p.Launch(url, opts); err == nil {
-			fmt.Printf("DEBUG: Successfully played stream %d: %s\n", i, s.Provider)
 			return s
 		}
-		fmt.Printf("DEBUG: Stream %d failed to play\n", i)
 	}
 
-	fmt.Printf("DEBUG: No streams could be played\n")
 	return nil
 }
 

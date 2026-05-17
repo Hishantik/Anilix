@@ -3,21 +3,19 @@ package extractor
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/anilix/anilix/curl"
 	"github.com/anilix/anilix/source"
 )
 
-type Mp4uploadExtractor struct {
-	client *http.Client
-}
+const mp4uploadReferer = "https://mp4upload.com/"
+
+type Mp4uploadExtractor struct{}
 
 func NewMp4uploadExtractor() *Mp4uploadExtractor {
-	return &Mp4uploadExtractor{
-		client: &http.Client{},
-	}
+	return &Mp4uploadExtractor{}
 }
 
 func (e *Mp4uploadExtractor) Name() string {
@@ -26,70 +24,95 @@ func (e *Mp4uploadExtractor) Name() string {
 
 func (e *Mp4uploadExtractor) CanHandle(url string) bool {
 	lower := strings.ToLower(url)
-	return strings.Contains(lower, "mp4upload.com")
+	return strings.Contains(lower, "mp4upload") ||
+		strings.Contains(lower, "mp4upload.com")
 }
 
 func (e *Mp4uploadExtractor) Extract(ctx context.Context, url, referer string) ([]*source.Stream, error) {
 	if referer == "" {
-		referer = "https://mp4upload.com/"
+		referer = mp4uploadReferer
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Referer":    referer,
+	}
+
+	html, err := curl.Get(ctx, url, headers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("curl failed: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", referer)
-
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	html, err := readBody(resp)
-	if err != nil {
-		return nil, err
-	}
-
-	// Look for video URL in the embed page
-	videoURL := e.extractVideoURL(html)
-	if videoURL == "" {
-		return nil, fmt.Errorf("no video URL found")
-	}
-
-	return []*source.Stream{
-		{
+	// Try to find direct mp4 URL from player config
+	mp4URL := e.extractMP4URL(html)
+	if mp4URL != "" {
+		return []*source.Stream{{
 			Provider: "mp4upload",
 			Quality:  "auto",
-			URL:      videoURL,
-			Referer:  url,
-		},
-	}, nil
+			URL:      mp4URL,
+			Referer:  referer,
+		}}, nil
+	}
+
+	// Try to find m3u8 URL
+	m3u8URL := e.extractM3U8URL(html)
+	if m3u8URL != "" {
+		return e.extractFromM3U8(ctx, m3u8URL, referer)
+	}
+
+	return nil, fmt.Errorf("no stream data found")
 }
 
-func (e *Mp4uploadExtractor) extractVideoURL(html string) string {
-	// Look for video URL in script
+func (e *Mp4uploadExtractor) extractFromM3U8(ctx context.Context, m3u8URL, referer string) ([]*source.Stream, error) {
+	variants, err := ParseMasterPlaylistCurl(ctx, m3u8URL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse m3u8: %w", err)
+	}
+
+	if len(variants) == 0 {
+		return nil, fmt.Errorf("no variants found")
+	}
+
+	streams := make([]*source.Stream, 0, len(variants))
+	for _, v := range variants {
+		streams = append(streams, &source.Stream{
+			Provider: "mp4upload",
+			Quality:  v.Quality,
+			URL:      v.URL,
+			Referer:  referer,
+		})
+	}
+
+	return streams, nil
+}
+
+func (e *Mp4uploadExtractor) extractMP4URL(html string) string {
+	// Mp4upload uses eval/packed JS, try multiple patterns
 	patterns := []string{
-		`video\.src\s*=\s*["']([^"']+)["']`,
-		`video\s*:\s*\{.*?src\s*:\s*["']([^"']+)["']`,
-		`file\s*:\s*["']([^"']+\.mp4[^"']*)["']`,
-		`(https?://[^\s"']+\.mp4[^\s"']*)`,
+		`(?i)src\s*:\s*["']([^"']+\.mp4[^"']*)["']`,
+		`(?i)file\s*:\s*["']([^"']+\.mp4[^"']*)["']`,
+		`(?i)"url"\s*:\s*"([^"]+\.mp4[^"]*)"`,
+		`(?i)playerInstance\.setup\([^}]*file\s*:\s*["']([^"']+)["']`,
+		`(?i)jwplayer\([^)]*\)\.setup\(\{[^}]*file\s*:\s*["']([^"']+)["']`,
 	}
 
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
 		matches := re.FindStringSubmatch(html)
-		if len(matches) > 1 && matches[1] != "" {
-			url := matches[1]
-			if strings.HasPrefix(url, "//") {
-				url = "https:" + url
-			}
-			return url
+		if len(matches) > 1 {
+			return matches[1]
 		}
 	}
 
+	return ""
+}
+
+func (e *Mp4uploadExtractor) extractM3U8URL(html string) string {
+	re := regexp.MustCompile(`(?i)(https?://[^\s"']+\.m3u8[^\s"']*)`)
+	matches := re.FindStringSubmatch(html)
+	if len(matches) > 1 {
+		return matches[1]
+	}
 	return ""
 }
 

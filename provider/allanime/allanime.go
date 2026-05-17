@@ -2,13 +2,47 @@ package Allanime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/anilix/anilix/curl"
 	"github.com/anilix/anilix/extractor"
 	"github.com/anilix/anilix/source"
 )
+
+// fixedProvider defines ani-cli's 5 fixed providers with their markers
+// These match the sed patterns in ani-cli's generate_link function
+var fixedProviders = []struct {
+	markers  []string // SourceName markers to match (case-insensitive)
+	name     string   // Internal provider name
+	priority int      // ani-cli order: 1=wixmp, 2=youtube, 3=sharepoint, 4=filemoon, 5=hianime
+}{
+	{[]string{"default"}, "wixmp", 1},
+	{[]string{"yt-mp4", "youtube"}, "youtube", 2},
+	{[]string{"s-mp4", "sharepoint"}, "sharepoint", 3},
+	{[]string{"fm-mp4", "filemoon", "fm-hls"}, "filemoon", 4},
+	{[]string{"luf-mp4", "hianime"}, "hianime", 5},
+}
+
+// isFixedProvider checks if a source name matches one of the 5 fixed providers
+func isFixedProvider(sourceName string) (string, bool) {
+	name := strings.ToLower(sourceName)
+	name = strings.ReplaceAll(name, " ", "")
+	
+	for _, fp := range fixedProviders {
+		for _, marker := range fp.markers {
+			if name == marker {
+				return fp.name, true
+			}
+		}
+	}
+	return "", false
+}
 
 // AllanimeProvider implements source.Source for AllAnime GraphQL API
 type AllanimeProvider struct {
@@ -51,7 +85,6 @@ func (a *AllanimeProvider) Search(query string) ([]*source.Anime, error) {
 
 // SeasonsOf returns seasons for the anime
 func (a *AllanimeProvider) SeasonsOf(anime *source.Anime) ([]source.Season, error) {
-	// AllAnime doesn't have explicit seasons, return single "Season 1"
 	return []source.Season{{Number: 1, Name: "Season 1"}}, nil
 }
 
@@ -67,10 +100,8 @@ func (a *AllanimeProvider) EpisodesOf(anime *source.Anime, season int) ([]*sourc
 		return nil, fmt.Errorf("failed to get episodes: %w", err)
 	}
 
-	// Get the list based on translation type (sub/dub)
 	epList, ok := episodesMap[a.translation]
 	if !ok {
-		// Fallback to sub if dub not available
 		epList, ok = episodesMap["sub"]
 		if !ok {
 			return nil, fmt.Errorf("no episodes found")
@@ -93,7 +124,7 @@ func (a *AllanimeProvider) EpisodesOf(anime *source.Anime, season int) ([]*sourc
 }
 
 // StreamsOf returns stream sources for an episode
-// Like ani-cli: fetch+extract per provider in priority order, stop at first success
+// Optimized: try ALL providers in parallel, return as soon as we have streams
 func (a *AllanimeProvider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) {
 	if episode.Anime == nil || episode.Anime.AllAnimeID == "" {
 		return nil, fmt.Errorf("episode has no anime or AllAnimeID")
@@ -106,164 +137,230 @@ func (a *AllanimeProvider) StreamsOf(episode *source.Episode) ([]*source.Stream,
 		return nil, fmt.Errorf("failed to get episode sources: %w", err)
 	}
 
-	fmt.Printf("DEBUG: AllanimeProvider.StreamsOf - Got %d sources\n", len(sources))
-
-	// Decode and prepare sources with priority
-	preparedSources := make([]preparedSource, 0, len(sources))
-	for _, src := range sources {
-		providerName := src.SourceName
-		streamUrl := src.SourceUrl
-
-		// Decode hex-encoded provider names
-		if isHexEncoded(providerName) {
-			providerName = decodeHexProviderID(providerName)
-		}
-
-		// Decode hex-encoded URLs (skip clock URLs)
-		if isHexEncoded(streamUrl) && !strings.Contains(streamUrl, "/clock") {
-			streamUrl = decodeHexProviderID(streamUrl)
-		}
-
-		providerName = getProviderName(providerName)
-		priority := getProviderPriority(providerName)
-
-		preparedSources = append(preparedSources, preparedSource{
-			provider:    providerName,
-			url:         streamUrl,
-			priority:    priority,
-		})
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("no sources found")
 	}
 
-	// Sort by priority (lower = higher priority)
-	sortByPriority(preparedSources)
+	// Use a timeout for extraction (10 seconds)
+	extractCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// Try each provider in priority order (like ani-cli)
-	seen := make(map[string]bool)
-	for _, ps := range preparedSources {
-		// Skip clock URLs that need special handling
-		if strings.Contains(ps.url, "/clock") {
-			fmt.Printf("DEBUG: Skipping clock URL: %s\n", ps.url[:min(30, len(ps.url))])
-			continue
-		}
+	// Extract streams from all providers in parallel
+	type extractResult struct {
+		provider string
+		streams  []*source.Stream
+	}
 
-		// Skip embed URLs (these can't be played directly)
-		if isEmbedURL(ps.url) {
-			fmt.Printf("DEBUG: Skipping embed URL: %s\n", ps.url[:min(30, len(ps.url))])
-			continue
-		}
+	resultCh := make(chan extractResult)
+	var wg sync.WaitGroup
 
-		fmt.Printf("DEBUG: Trying provider: %s (priority %d), url: %s\n", ps.provider, ps.priority, ps.url[:min(50, len(ps.url))])
+	for _, src := range sources {
+		wg.Add(1)
+		go func(s SourceUrl) {
+			defer wg.Done()
+			streams := extractStreams(extractCtx, s)
+			if len(streams) > 0 {
+				resultCh <- extractResult{provider: s.SourceName, streams: streams}
+			}
+		}(src)
+	}
 
-		// Find extractor for this URL
-		var extracted []*source.Stream
-		for _, ext := range extractor.All() {
-			if ext.CanHandle(ps.url) {
-				fmt.Printf("DEBUG: Using extractor: %s for URL: %s\n", ext.Name(), ps.url[:min(60, len(ps.url))])
-				streams, err := ext.Extract(ctx, ps.url, Referer)
-				if err == nil && len(streams) > 0 {
-					extracted = streams
-					fmt.Printf("DEBUG: Extracted %d streams from %s\n", len(streams), ext.Name())
-					break
-				}
-				fmt.Printf("DEBUG: Extractor %s failed: %v\n", ext.Name(), err)
+	// Wait for first result or timeout
+	select {
+	case result := <-resultCh:
+		// Got streams! Collect any other quick results
+		allStreams := result.streams
+		
+		// Briefly wait for more results (500ms)
+		timeout := time.After(500 * time.Millisecond)
+		for {
+			select {
+			case r := <-resultCh:
+				allStreams = append(allStreams, r.streams...)
+			case <-timeout:
+				sortStreamsByQuality(allStreams)
+				return allStreams, nil
 			}
 		}
+	case <-extractCtx.Done():
+		// Timeout - no streams found
+		return nil, fmt.Errorf("no streams found from any provider")
+	}
+}
 
-		// If we got streams, return them (like ani-cli stops at first working provider)
-		if len(extracted) > 0 {
-			result := make([]*source.Stream, 0, len(extracted))
-			for _, s := range extracted {
-				// Fix relative URLs
+// extractStreams tries all registered extractors for a single source URL
+// Optimized: use per-extractor timeout, skip known embed URLs
+func extractStreams(ctx context.Context, src SourceUrl) []*source.Stream {
+	// Decode hex-encoded URL if needed
+	streamUrl := src.SourceUrl
+	if isHexEncoded(streamUrl) && !strings.Contains(streamUrl, "/clock") {
+		streamUrl = decodeHexProviderID(streamUrl)
+	}
+
+	// Determine provider name
+	providerName, isFixed := isFixedProvider(src.SourceName)
+	if !isFixed {
+		// Use actual provider name
+		providerName = strings.ToLower(src.SourceName)
+		providerName = strings.ReplaceAll(providerName, " ", "")
+	}
+
+	// Handle tools.fast4speed.rsvp URLs - direct video URLs (instant, no extraction needed)
+	if strings.Contains(streamUrl, "tools.fast4speed.rsvp") {
+		return []*source.Stream{{
+			Provider: "youtube",
+			Quality:  "auto",
+			URL:      streamUrl,
+			Referer:  Referer,
+		}}
+	}
+
+	// Handle clock URLs - fetch and extract video link
+	if strings.Contains(streamUrl, "/clock") {
+		return extractClockURL(ctx, streamUrl, providerName)
+	}
+
+	// Skip empty URLs
+	if streamUrl == "" {
+		return nil
+	}
+
+	// Skip known embed URLs that won't have direct video
+	if isEmbedURL(streamUrl) {
+		return nil
+	}
+
+	// Use a shorter per-source timeout (5 seconds)
+	extCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Try all registered extractors
+	for _, ext := range extractor.All() {
+		if !ext.CanHandle(streamUrl) {
+			continue
+		}
+
+		// Use a channel to timeout individual extractor calls
+		type extResult struct {
+			streams []*source.Stream
+			err     error
+		}
+		resultCh := make(chan extResult, 1)
+		go func() {
+			streams, err := ext.Extract(extCtx, streamUrl, Referer)
+			resultCh <- extResult{streams: streams, err: err}
+		}()
+
+		select {
+		case res := <-resultCh:
+			if res.err != nil || len(res.streams) == 0 {
+				continue
+			}
+
+			result := make([]*source.Stream, 0, len(res.streams))
+			for _, s := range res.streams {
 				url := s.URL
 				if strings.HasPrefix(url, "//") {
 					url = "https:" + url
 				}
-
-				if !seen[url] {
-					seen[url] = true
-					s.Provider = ps.provider
+				if isPlayableURL(url) {
 					s.URL = url
-					s.Referer = ps.url
+					s.Provider = providerName
+					s.Referer = streamUrl
 					result = append(result, s)
-					fmt.Printf("DEBUG:   -> stream: provider=%s, url=%s\n", s.Provider, url[:min(80, len(url))])
 				}
 			}
+
 			if len(result) > 0 {
-				fmt.Printf("DEBUG: Returning %d streams from provider: %s\n", len(result), ps.provider)
-				return result, nil
+				return result
 			}
-		}
-
-		// Fallback: if no extractor found or extraction failed, try raw URL if it's a direct video URL
-		// Don't use embed URLs as fallback - they can't be played directly
-		url := ps.url
-		if strings.HasPrefix(url, "//") {
-			url = "https:" + url
-		}
-		isEmbed := isEmbedURL(url) ||
-			strings.HasSuffix(url, "/embed") ||
-			strings.Contains(url, "/embed-") ||
-			strings.Contains(url, "/e/") ||
-			strings.Contains(url, "/videoembed")
-		if !seen[url] && url != "" && !isEmbed {
-			seen[url] = true
-			fmt.Printf("DEBUG: Using raw URL as fallback: %s\n", url[:min(80, len(url))])
-			return []*source.Stream{{
-				Provider: ps.provider,
-				URL:      url,
-				Referer:  Referer,
-				Quality:  "auto",
-			}}, nil
-		} else if isEmbed {
-			fmt.Printf("DEBUG: Skipping embed URL as fallback: %s\n", url[:min(40, len(url))])
+		case <-extCtx.Done():
+			// Extractor timed out, try next one
+			continue
 		}
 	}
 
-	return nil, fmt.Errorf("no streams found")
+	return nil
 }
 
-// preparedSource holds a decoded source with priority
-type preparedSource struct {
-	provider string
-	url      string
-	priority int
+// extractClockURL fetches the clock API and extracts the video link
+// ani-cli fetches https://allanime.day/apivtwo/clock?id=... and extracts the link
+func extractClockURL(ctx context.Context, clockPath, providerName string) []*source.Stream {
+	// Build full URL
+	clockURL := clockPath
+	if !strings.HasPrefix(clockPath, "http") {
+		clockURL = "https://allanime.day" + clockPath
+	}
+
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Referer":    Referer,
+	}
+
+	body, err := curl.Get(ctx, clockURL, headers)
+	if err != nil {
+		return nil
+	}
+
+	// Parse JSON response to extract link
+	var resp struct {
+		Link string `json:"link"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Link == "" {
+		return nil
+	}
+
+	// Decode hex-encoded link if needed
+	link := resp.Link
+	if isHexEncoded(link) {
+		link = decodeHexProviderID(link)
+	}
+
+	if link == "" || isEmbedURL(link) {
+		return nil
+	}
+
+	// Fix relative URLs
+	if strings.HasPrefix(link, "//") {
+		link = "https:" + link
+	}
+
+	return []*source.Stream{{
+		Provider: providerName,
+		Quality:  "auto",
+		URL:      link,
+		Referer:  Referer,
+	}}
 }
 
-// getProviderPriority returns priority for a provider (lower = higher priority)
-func getProviderPriority(provider string) int {
-	priority := map[string]int{
-		"wixmp":        1,
-		"hianime":      2,
-		"filemoon":     3,
-		"vidstreaming": 4,
-		"mp4upload":    5,
-		"anihdplay":    6,
-		"streamsb":     7,
-		"streamlare":   8,
-		"ok":           9,  // ok.ru fallback
-		"fm-hls":       10, // filemoon hls
-		"default":      20,
-	}
-	if p, ok := priority[provider]; ok {
-		return p
-	}
-	return priority["default"]
+// sortStreamsByQuality sorts streams by quality (best first)
+// Parses quality like "1080p" -> 1080, "720p" -> 720
+// "auto" quality goes to the top
+func sortStreamsByQuality(streams []*source.Stream) {
+	sort.SliceStable(streams, func(i, j int) bool {
+		qi := parseQuality(streams[i].Quality)
+		qj := parseQuality(streams[j].Quality)
+		return qi > qj
+	})
 }
 
-// sortByPriority sorts sources by priority (ani-cli order: wixmp > hianime > filemoon)
-func sortByPriority(sources []preparedSource) {
-	for i := 0; i < len(sources)-1; i++ {
-		for j := i + 1; j < len(sources); j++ {
-			if sources[i].priority > sources[j].priority {
-				sources[i], sources[j] = sources[j], sources[i]
-			}
-		}
+// parseQuality extracts numeric quality from string like "1080p", "720p", "auto"
+// Returns higher number for better quality, 9999 for "auto"
+func parseQuality(q string) int {
+	if q == "" || strings.ToLower(q) == "auto" {
+		return 9999
 	}
+	// Remove "p" suffix
+	q = strings.TrimSuffix(strings.ToLower(q), "p")
+	n, err := strconv.Atoi(q)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // isEmbedURL checks if URL is an embed page that can't be played directly
 func isEmbedURL(url string) bool {
-	// Skip common embed domains
 	return strings.Contains(url, "ok.ru/videoembed") ||
 		strings.Contains(url, "vk.com/video_ext") ||
 		strings.Contains(url, "/videoembed") ||
@@ -272,8 +369,27 @@ func isEmbedURL(url string) bool {
 		strings.Contains(url, "/e/") ||
 		strings.Contains(url, "allanime.uns.bio") ||
 		strings.Contains(url, "allanime.bio") ||
-		strings.Contains(url, "#") || // Fragment identifiers indicate player pages
+		strings.Contains(url, "#") ||
 		strings.HasSuffix(url, "/player")
+}
+
+// isPlayableURL checks if URL is a direct video (m3u8/mp4) that can be played
+func isPlayableURL(url string) bool {
+	lower := strings.ToLower(url)
+	isVideo := strings.Contains(lower, ".m3u8") || strings.Contains(lower, ".mp4")
+	if !isVideo {
+		return false
+	}
+	if isEmbedURL(url) {
+		return false
+	}
+	skipExts := []string{".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".html", ".htm"}
+	for _, ext := range skipExts {
+		if strings.Contains(lower, ext) {
+			return false
+		}
+	}
+	return true
 }
 
 // SetTranslation sets sub or dub preference
@@ -281,13 +397,6 @@ func (a *AllanimeProvider) SetTranslation(trans string) {
 	if trans == "sub" || trans == "dub" {
 		a.translation = trans
 	}
-}
-
-// getProviderName normalizes provider names
-func getProviderName(name string) string {
-	name = strings.ToLower(name)
-	name = strings.ReplaceAll(name, " ", "")
-	return name
 }
 
 // TranslationType returns current translation setting

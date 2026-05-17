@@ -4,23 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/anilix/anilix/curl"
 	"github.com/anilix/anilix/source"
 )
 
 const hianimeReferer = "https://hianime.com/"
 
-type HianimeExtractor struct {
-	client *http.Client
-}
+type HianimeExtractor struct{}
 
 func NewHianimeExtractor() *HianimeExtractor {
-	return &HianimeExtractor{
-		client: &http.Client{},
-	}
+	return &HianimeExtractor{}
 }
 
 func (e *HianimeExtractor) Name() string {
@@ -38,23 +34,14 @@ func (e *HianimeExtractor) Extract(ctx context.Context, url, referer string) ([]
 		referer = hianimeReferer
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Referer":    referer,
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", referer)
-
-	resp, err := e.client.Do(req)
+	html, err := curl.Get(ctx, url, headers)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	html, err := readBodyHTML(resp)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("curl failed: %w", err)
 	}
 
 	// Try to extract m3u8 URL from the page
@@ -77,7 +64,7 @@ func (e *HianimeExtractor) Extract(ctx context.Context, url, referer string) ([]
 }
 
 func (e *HianimeExtractor) extractFromM3U8(ctx context.Context, m3u8URL, referer string) ([]*source.Stream, error) {
-	variants, err := ParseMasterPlaylist(m3u8URL, e.client)
+	variants, err := ParseMasterPlaylistCurl(ctx, m3u8URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse m3u8: %w", err)
 	}
@@ -176,39 +163,15 @@ func (e *HianimeExtractor) ExtractSubtitles(ctx context.Context, url, referer st
 		referer = hianimeReferer
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Referer":    referer,
+	}
+
+	html, err := curl.Get(ctx, url, headers)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", referer)
-
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	html, err := readBodyHTML(resp)
-	if err != nil {
-		return nil, err
-	}
-
-	// Use the m3u8 package extractSubtitlesFromHTML function
 	return extractSubtitlesFromHTML(html), nil
-}
-
-func readBodyHTML(resp *http.Response) (string, error) {
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("non-200 status: %d", resp.StatusCode)
-	}
-
-	buf := make([]byte, 1024*1024)
-	n, err := resp.Body.Read(buf)
-	if err != nil && err.Error() != "EOF" {
-		return "", fmt.Errorf("read error: %w", err)
-	}
-
-	return string(buf[:n]), nil
 }
