@@ -12,3 +12,7 @@ anilix
 
 # OS
 .DS_Store
+
+# AI agent configs
+AGENTS.md
+CLAUDE.md
