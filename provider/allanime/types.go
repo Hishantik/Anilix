@@ -34,6 +34,7 @@ type ShowNode struct {
 	Thumbnail          string              `json:"thumbnail"`
 	AvailableEpisodes  AvailableEpisodes  `json:"availableEpisodes"`
 	MalID              string              `json:"malId"`
+	AniListID          string              `json:"aniListId"`
 	Type               string              `json:"type"`
 	Season             string              `json:"season"`
 }

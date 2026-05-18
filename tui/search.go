@@ -3,11 +3,14 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	allanime "github.com/anilix/anilix/provider/allanime"
+	"github.com/anilix/anilix/provider/anilist"
 	"github.com/anilix/anilix/provider/jikan"
 	"github.com/anilix/anilix/source"
 	"github.com/anilix/anilix/player"
@@ -16,6 +19,8 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -52,12 +57,15 @@ type SearchModel struct {
 	textInput textinput.Model
 	help      help.Model
 	keymap    keymap
+	loading   spinner.Model
+	progress  progress.Model
 
 	searchList  list.Model
 	episodeList list.Model
 
 	allanimeClient   *allanime.AllanimeClient
 	jikanClient      *jikan.JikanClient
+	anilistClient    *anilist.Client
 	allanimeProvider *allanime.AllanimeProvider
 
 	selectedResult *SelectionResult
@@ -67,28 +75,46 @@ type SearchModel struct {
 	height    int
 	listWidth int
 
-	prevSearchListIndex int
+	progressPercent   float64
+	progressStart     time.Time
+
+	prevSearchListIndex   int
+	prefetchCancel        context.CancelFunc
+	debounceTimer         *time.Timer
+	episodeTitlesCache    map[int][]string
+	episodeMetadataCache  map[string]*jikan.Episode
+	metadataFetchChan     chan int
+	episodeMetadataChan   chan int
+	episodeDebounceTimer  *time.Timer
+	prevEpisodeListIndex  int
 }
 
 func NewSearchModel() *SearchModel {
 	ti := textinput.New()
-	ti.Placeholder = "Search anime..."
+	ti.Placeholder = "Type to search..."
 	ti.Focus()
 	ti.Prompt = "> "
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#F2BB05"))
-	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#E2294F"))
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#3D348B"))
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
 
 	allanimeProvider := allanime.NewAllanimeProvider()
 	allanimeProvider.SetTranslation("sub")
 
 	help := help.New()
-	help.Styles.ShortKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#F2BB05"))
-	help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#B6C2D9"))
-	help.Styles.FullKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#F2BB05"))
-	help.Styles.FullDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#B6C2D9"))
+	help.Styles.ShortKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	help.Styles.FullKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	help.Styles.FullDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
 
 	km := newKeymap()
+
+	s := spinner.New()
+	s.Spinner = spinner.Points
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+
+	p := progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
+	p.Width = 40
 
 	searchList := makeList("Search Results", km)
 	episodeList := makeList("Episodes", km)
@@ -100,12 +126,19 @@ func NewSearchModel() *SearchModel {
 		textInput:        ti,
 		help:             help,
 		keymap:           km,
+		loading:          s,
+		progress:         p,
 		searchList:       searchList,
 		episodeList:      episodeList,
 		allanimeClient:   allanime.NewAllanimeClient(),
 		jikanClient:      jikan.NewClient("https://api.jikan.moe/v4"),
+		anilistClient:    anilist.NewClient(),
 		allanimeProvider: allanimeProvider,
 		lastQuery:        "",
+		episodeTitlesCache: make(map[int][]string),
+		episodeMetadataCache: make(map[string]*jikan.Episode),
+		metadataFetchChan: make(chan int, 1),
+		episodeMetadataChan: make(chan int, 1),
 	}
 }
 
@@ -121,7 +154,50 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 
+	case spinner.TickMsg:
+		m.loading, _ = m.loading.Update(msg)
+
+	case progressTickMsg:
+		if m.searchState.Loading || m.episodeState.Loading {
+			elapsed := time.Since(m.progressStart).Seconds()
+			m.progressPercent = math.Min(0.9, elapsed/5.0)
+		}
+		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return progressTickMsg{}
+		}))
+
 	case tea.KeyMsg:
+		if m.state == searchState && m.textInput.Focused() {
+			switch {
+			case key.Matches(msg, m.keymap.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, m.keymap.Back):
+				m.textInput.Blur()
+				return m, nil
+			case key.Matches(msg, m.keymap.Select):
+				query := m.textInput.Value()
+				if len(query) >= 2 {
+					m.lastQuery = query
+					m.searchState.Query = query
+					m.searchState.Loading = true
+					m.progressPercent = 0
+					m.progressStart = time.Now()
+					cmds = append(cmds, m.doSearch(query))
+					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+						return progressTickMsg{}
+					}))
+				}
+			case key.Matches(msg, m.keymap.Up), key.Matches(msg, m.keymap.Down):
+				m.textInput.Blur()
+				// pass through to list handling below
+			default:
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				cmds = append(cmds, cmd)
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 		switch {
 		case key.Matches(msg, m.keymap.Quit):
 			return m, tea.Quit
@@ -130,7 +206,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == episodesState {
 				m.state = searchState
 				m.episodeState = NewEpisodeState()
+				return m, nil
+			}
+
+		case key.Matches(msg, m.keymap.Search):
+			if m.state == searchState {
 				m.textInput.Focus()
+				m.textInput.SetValue("")
 				return m, nil
 			}
 
@@ -142,14 +224,25 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if m.state == episodesState && m.episodeState.AnimeID != "" {
+				m.episodeState.Loading = true
+				m.progressPercent = 0
+				m.progressStart = time.Now()
 				selectedAnime := m.searchState.Results[m.searchState.Selected]
 				if selectedAnime != nil {
 					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AnimeID, selectedAnime.MALID))
+					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+						return progressTickMsg{}
+					}))
 				}
 			} else if m.lastQuery != "" {
+				m.searchState.Loading = true
+				m.progressPercent = 0
+				m.progressStart = time.Now()
 				cmds = append(cmds, m.doSearch(m.lastQuery))
+				cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+					return progressTickMsg{}
+				}))
 			}
-			return m, tea.Batch(cmds...)
 
 		case key.Matches(msg, m.keymap.Select):
 			if m.state == searchState {
@@ -159,9 +252,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if anime.AllAnimeID != "" {
 						m.state = episodesState
 						m.episodeState.AnimeID = anime.AllAnimeID
-						m.textInput.Blur()
+						m.episodeState.Loading = true
+						m.progressPercent = 0
+						m.progressStart = time.Now()
 						cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
-						return m, tea.Batch(cmds...)
+						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+							return progressTickMsg{}
+						}))
 					}
 				}
 			} else if m.state == episodesState {
@@ -175,61 +272,147 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if m.state == searchState {
-			var cmd tea.Cmd
-			m.textInput, cmd = m.textInput.Update(msg)
-			cmds = append(cmds, cmd)
-
-			query := m.textInput.Value()
-			if query != m.lastQuery && len(query) >= 2 {
-				m.lastQuery = query
-				m.searchState.Query = query
-				cmds = append(cmds, m.doSearch(query))
-			}
-		}
-
-		if m.state == searchState && len(m.searchState.Results) > 0 {
+		if m.state == searchState && !m.textInput.Focused() && len(m.searchState.Results) > 0 {
 			var cmd tea.Cmd
 			m.searchList, cmd = m.searchList.Update(msg)
 			cmds = append(cmds, cmd)
 			if m.searchList.Index() != m.prevSearchListIndex {
 				m.prevSearchListIndex = m.searchList.Index()
 				m.searchState.Selected = m.searchList.Index()
-				cmds = append(cmds, m.fetchMetadata())
+
+				if m.debounceTimer != nil {
+					m.debounceTimer.Stop()
+				}
+
+				idx := m.searchList.Index()
+				m.debounceTimer = time.AfterFunc(150*time.Millisecond, func() {
+					select {
+					case m.metadataFetchChan <- idx:
+					default:
+					}
+				})
+
+				if m.prefetchCancel != nil {
+					m.prefetchCancel()
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				m.prefetchCancel = cancel
+				go m.prefetchMetadata(ctx, m.searchList.Index()+1, m.searchList.Index()+6)
 			}
 		} else if m.state == episodesState && len(m.episodeState.Episodes) > 0 {
 			var cmd tea.Cmd
 			m.episodeList, cmd = m.episodeList.Update(msg)
 			cmds = append(cmds, cmd)
-			m.episodeState.Selected = m.episodeList.Index()
+			if m.episodeList.Index() != m.prevEpisodeListIndex {
+				m.prevEpisodeListIndex = m.episodeList.Index()
+				m.episodeState.Selected = m.episodeList.Index()
+
+				if m.episodeDebounceTimer != nil {
+					m.episodeDebounceTimer.Stop()
+				}
+
+				idx := m.episodeList.Index()
+				m.episodeDebounceTimer = time.AfterFunc(150*time.Millisecond, func() {
+					select {
+					case m.episodeMetadataChan <- idx:
+					default:
+					}
+				})
+			} else {
+				m.episodeState.Selected = m.episodeList.Index()
+			}
 		}
 
 	case SearchResultsMsg:
 		m.searchState.Results = msg.Results
 		m.searchState.Loading = false
+		m.progressPercent = 1.0
 		m.searchState.Selected = 0
+		m.textInput.Blur()
+		m.episodeTitlesCache = make(map[int][]string)
+		if m.prefetchCancel != nil {
+			m.prefetchCancel()
+		}
+		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
 		if len(msg.Results) > 0 {
+			ctx, cancel := context.WithCancel(context.Background())
+			m.prefetchCancel = cancel
+			go m.prefetchMetadata(ctx, 0, 10)
+			m.searchState.MetadataLoading = true
+			m.loading = spinner.New()
+			m.loading.Spinner = spinner.Points
+			m.loading.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
 			cmds = append(cmds, m.fetchMetadata())
+			cmds = append(cmds, func() tea.Msg {
+				idx := <-m.metadataFetchChan
+				return MetadataFetchTriggered{Index: idx}
+			})
 		}
 		m.updateSearchList()
 
+	case MetadataFetchTriggered:
+		if msg.Index == m.searchState.Selected {
+			m.searchState.MetadataLoading = true
+			m.loading = spinner.New()
+			m.loading.Spinner = spinner.Points
+			m.loading.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+			cmds = append(cmds, m.fetchMetadata())
+		}
+		cmds = append(cmds, func() tea.Msg {
+			idx := <-m.metadataFetchChan
+			return MetadataFetchTriggered{Index: idx}
+		})
+
 	case MetadataLoadedMsg:
-		m.searchState.Metadata = msg.Metadata
-		m.searchState.MetadataLoading = false
+		if msg.Index == m.searchState.Selected {
+			m.searchState.Metadata = msg.Metadata
+			m.searchState.MetadataLoading = false
+		}
 
 	case EpisodesLoadedMsg:
 		m.episodeState.Episodes = msg.Episodes
 		m.episodeState.EpisodeTitles = msg.EpisodeTitles
 		m.episodeState.Loading = false
+		m.progressPercent = 1.0
+		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
 		if msg.Error != nil {
 			m.episodeState.Err = msg.Error
 		}
 		m.updateEpisodeList()
+		if len(msg.Episodes) > 0 {
+			m.episodeState.MetadataLoading = true
+			cmds = append(cmds, m.fetchEpisodeMetadata())
+			cmds = append(cmds, func() tea.Msg {
+				idx := <-m.episodeMetadataChan
+				return EpisodeMetadataFetchTriggered{Index: idx}
+			})
+		}
+
+	case EpisodeMetadataFetchTriggered:
+		if msg.Index == m.episodeState.Selected {
+			m.episodeState.MetadataLoading = true
+			cmds = append(cmds, m.fetchEpisodeMetadata())
+		}
+		cmds = append(cmds, func() tea.Msg {
+			idx := <-m.episodeMetadataChan
+			return EpisodeMetadataFetchTriggered{Index: idx}
+		})
+
+	case EpisodeMetadataLoadedMsg:
+		if msg.Index == m.episodeState.Selected {
+			m.episodeState.EpisodeMetadata = msg.Metadata
+			m.episodeState.MetadataLoading = false
+		}
 
 	case TUIErrorMsg:
 		m.episodeState.Err = msg.Err
 	}
 
+	if m.searchState.MetadataLoading || m.episodeState.MetadataLoading {
+		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return spinner.TickMsg{Time: t}
+		}))
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -254,6 +437,7 @@ func (m *SearchModel) resize(width, height int) {
 	m.episodeList.SetSize(m.listWidth, listHeight)
 	m.textInput.Width = styledWidth / 2
 	m.help.Width = styledWidth
+	m.progress.Width = styledWidth
 }
 
 func (m *SearchModel) View() string {
@@ -296,23 +480,29 @@ func (m *SearchModel) renderLeftPanel(width int) string {
 
 	switchText := renderTextSwitch(m.searchState.TranslationType)
 	lines = append(lines, subDubPaddingStyle.Render(switchText))
+	lines = append(lines, "")
 	lines = append(lines, m.textInput.View())
 	lines = append(lines, "")
 	lines = append(lines, m.searchList.View())
+
+	if m.searchState.Loading {
+		lines = append(lines, "")
+		lines = append(lines, m.progress.ViewAs(m.progressPercent))
+	}
 
 	return strings.Join(lines, "\n")
 }
 
 func (m *SearchModel) renderRightPanel(width int) string {
 	if m.searchState.MetadataLoading {
-		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#7D1128")).Render("Loading metadata..."))
+		return paddingStyle.Render(lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading metadata..."))
 	}
 
 	if m.searchState.Metadata == nil {
-		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#7D1128")).Render("Select an anime"))
+		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Render("Select an anime"))
 	}
 
-	return paddingStyle.Render(strings.Join(m.renderMetadata(), "\n"))
+	return paddingStyle.Render(strings.Join(m.renderMetadata(width), "\n"))
 }
 
 func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
@@ -321,47 +511,116 @@ func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
 	switchText := renderTextSwitch(m.searchState.TranslationType)
 	lines = append(lines, subDubPaddingStyle.Render(switchText))
 	lines = append(lines, "")
+	lines = append(lines, "")
 	lines = append(lines, m.episodeList.View())
+
+	if m.episodeState.Loading {
+		lines = append(lines, "")
+		lines = append(lines, m.progress.ViewAs(m.progressPercent))
+	}
 
 	return strings.Join(lines, "\n")
 }
 
 func (m *SearchModel) renderEpisodeRightPanel(width int) string {
-	if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
+	if m.episodeState.MetadataLoading {
+		return paddingStyle.Render(lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading episode info..."))
+	}
+
+	if len(m.episodeState.Episodes) == 0 {
+		return paddingStyle.Render(style.Faint("No episodes"))
+	}
+
+	if m.episodeState.Selected >= len(m.episodeState.Episodes) {
+		return paddingStyle.Render(style.Faint("Select an episode"))
+	}
+
+	meta := m.episodeState.EpisodeMetadata
+	if meta == nil {
 		selectedEp := m.episodeState.Episodes[m.episodeState.Selected]
 		var selectedTitle string
 		if len(m.episodeState.EpisodeTitles) > m.episodeState.Selected {
 			selectedTitle = m.episodeState.EpisodeTitles[m.episodeState.Selected]
 		}
 		if selectedTitle != "" {
-			return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render(fmt.Sprintf("Episode %s: %s", selectedEp, selectedTitle)))
+			return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(fmt.Sprintf("Episode %s: %s", selectedEp, selectedTitle)))
 		}
-		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render(fmt.Sprintf("Episode %s", selectedEp)))
+		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(fmt.Sprintf("Episode %s", selectedEp)))
 	}
-	return paddingStyle.Render(style.Faint("No episodes"))
+
+	return paddingStyle.Render(strings.Join(m.renderEpisodeMetadata(width), "\n"))
 }
 
-func (m *SearchModel) renderMetadata() []string {
-	meta := m.searchState.Metadata
+func (m *SearchModel) renderEpisodeMetadata(width int) []string {
+	meta := m.episodeState.EpisodeMetadata
 	var lines []string
 
-	lines = append(lines, style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render(meta.Title))
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(meta.Title))
 
-	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
-		lines = append(lines, style.New().Foreground(lipgloss.Color("#C41E3D")).Italic(true).Render(meta.TitleEnglish))
+	if meta.TitleJapanese != "" {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Italic(true).Render(meta.TitleJapanese))
 	}
 
-	lines = append(lines, style.New().Foreground(lipgloss.Color("#E2294F")).Render(fmt.Sprintf("Type: %s | Year: %d | Episodes: %d", meta.Type, meta.Year, meta.Episodes)))
-	lines = append(lines, style.New().Foreground(lipgloss.Color("#E2294F")).Render(fmt.Sprintf("Status: %s", meta.Status)))
-	lines = append(lines, style.New().Foreground(lipgloss.Color("#E2294F")).Render(fmt.Sprintf("Score: %.2f | Rank: #%d", meta.Score, meta.Rank)))
+	var infoParts []string
+	if meta.Aired != "" {
+		aired := meta.Aired[:10]
+		infoParts = append(infoParts, fmt.Sprintf("Aired: %s", aired))
+	}
+	if meta.Duration > 0 {
+		infoParts = append(infoParts, fmt.Sprintf("Duration: %dm", meta.Duration/60))
+	}
+	if meta.Score > 0 {
+		infoParts = append(infoParts, fmt.Sprintf("Score: %.2f", meta.Score))
+	}
+	if len(infoParts) > 0 {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Render(strings.Join(infoParts, " | ")))
+	}
 
-	if len(meta.Genres) > 0 {
-		lines = append(lines, style.New().Foreground(lipgloss.Color("#C41E3D")).Render(fmt.Sprintf("Genres: %s", strings.Join(meta.Genres, ", "))))
+	var tags []string
+	if meta.Filler {
+		tags = append(tags, style.New().Foreground(lipgloss.Color("#e74c3c")).Render("Filler"))
+	}
+	if meta.Recap {
+		tags = append(tags, style.New().Foreground(lipgloss.Color("#f39c12")).Render("Recap"))
+	}
+	if len(tags) > 0 {
+		lines = append(lines, strings.Join(tags, "  "))
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, style.New().Foreground(lipgloss.Color("#FF2C55")).Bold(true).Render("Synopsis:"))
-	lines = append(lines, style.Faint(truncateSynopsis(meta.Synopsis, 300)))
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render("Synopsis:"))
+	synopsisStyle := style.New().Foreground(lipgloss.Color("#f4f4f6")).Width(width - paddingStyle.GetHorizontalFrameSize())
+	lines = append(lines, synopsisStyle.Render(meta.Synopsis))
+
+	return lines
+}
+
+func (m *SearchModel) renderMetadata(width int) []string {
+	meta := m.searchState.Metadata
+	var lines []string
+
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(meta.Title))
+
+	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Italic(true).Render(meta.TitleEnglish))
+	}
+
+	if meta.TitleNative != "" {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Italic(true).Render(meta.TitleNative))
+	}
+
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Render(fmt.Sprintf("Type: %s | Year: %d | Episodes: %d", meta.Type, meta.Year, meta.Episodes)))
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Render(fmt.Sprintf("Status: %s", meta.Status)))
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Render(fmt.Sprintf("Score: %.2f | Rank: #%d", meta.Score, meta.Rank)))
+
+	if len(meta.Genres) > 0 {
+		lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Render(fmt.Sprintf("Genres: %s", strings.Join(meta.Genres, ", "))))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render("Synopsis:"))
+	synopsisStyle := style.New().Foreground(lipgloss.Color("#f4f4f6")).Width(width - paddingStyle.GetHorizontalFrameSize())
+	lines = append(lines, synopsisStyle.Render(meta.Synopsis))
 
 	return lines
 }
@@ -410,7 +669,6 @@ func (m *SearchModel) updateEpisodeList() {
 
 func (m *SearchModel) doSearch(query string) tea.Cmd {
 	return func() tea.Msg {
-		m.searchState.Loading = true
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -444,49 +702,274 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 
 	anime := m.searchState.Results[m.searchState.Selected]
 
-	if anime.MALID == 0 {
+	hasMalID := anime.MALID > 0
+	hasAniListID := anime.AniListID > 0
+
+	if !hasMalID && !hasAniListID {
 		m.searchState.Metadata = nil
 		m.searchState.MetadataLoading = false
 		return nil
 	}
 
+	if hasMalID && m.jikanClient.IsCached(anime.MALID) && (!hasAniListID || m.anilistClient.IsCached(anime.AniListID)) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var jikanData *jikan.AnimeData
+		var anilistData *anilist.MediaData
+
+		if hasMalID {
+			data, err := m.jikanClient.GetAnime(ctx, anime.MALID)
+			if err == nil {
+				jikanData = data
+			}
+		}
+		if hasAniListID {
+			data, err := m.anilistClient.GetAnime(ctx, anime.AniListID)
+			if err == nil {
+				anilistData = data
+			}
+		}
+
+		if jikanData != nil || anilistData != nil {
+			m.searchState.Metadata = mergeMetadata(jikanData, anilistData)
+			m.searchState.MetadataLoading = false
+			return nil
+		}
+	}
+
 	m.searchState.MetadataLoading = true
+	m.loading = spinner.New()
+	m.loading.Spinner = spinner.Points
+	m.loading.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	idx := m.searchState.Selected
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		data, err := m.jikanClient.GetAnime(ctx, anime.MALID)
-		if err != nil {
-			return MetadataLoadedMsg{Metadata: nil}
+		var jikanData *jikan.AnimeData
+		var anilistData *anilist.MediaData
+
+		var wg sync.WaitGroup
+
+		if hasMalID {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				data, err := m.jikanClient.GetAnime(ctx, anime.MALID)
+				if err == nil {
+					jikanData = data
+				}
+			}()
 		}
 
-		genres := make([]string, 0, len(data.Genres))
-		for _, g := range data.Genres {
-			genres = append(genres, g.Name)
+		if hasAniListID {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				data, err := m.anilistClient.GetAnime(ctx, anime.AniListID)
+				if err == nil {
+					anilistData = data
+				}
+			}()
 		}
 
-		year := 0
-		if y, ok := data.Year.(float64); ok {
-			year = int(y)
+		wg.Wait()
+
+		if jikanData == nil && anilistData == nil {
+			return MetadataLoadedMsg{Metadata: nil, Index: idx}
 		}
 
-		metadata := &MetadataPanel{
-			Title:        data.Title,
-			TitleEnglish: data.TitleEnglish,
-			Cover:        data.Images.JPG.LargeImageURL,
-			Year:         year,
-			Type:         data.Type,
-			Status:       data.Status,
-			Episodes:     data.Episodes,
-			Score:        data.Score,
-			Rank:         data.Rank,
-			Popularity:   data.Popularity,
-			Genres:       genres,
-			Synopsis:     truncateSynopsis(data.Synopsis, 500),
-		}
+		return MetadataLoadedMsg{Metadata: mergeMetadata(jikanData, anilistData), Index: idx}
+	}
+}
 
-		return MetadataLoadedMsg{Metadata: metadata}
+func mergeMetadata(jikanData *jikan.AnimeData, anilistData *anilist.MediaData) *MetadataPanel {
+	panel := &MetadataPanel{}
+
+	var sources []string
+	if jikanData != nil {
+		sources = append(sources, "Jikan")
+	}
+	if anilistData != nil {
+		sources = append(sources, "AniList")
+	}
+	if len(sources) > 1 {
+		panel.Source = "Jikan + AniList"
+	} else if len(sources) == 1 {
+		panel.Source = sources[0]
+	}
+
+	if anilistData != nil {
+		panel.Title = anilistData.Title.Romaji
+		panel.TitleEnglish = anilistData.Title.English
+		panel.TitleNative = anilistData.Title.Native
+		panel.Cover = anilistData.CoverImage.Large
+		if panel.Cover == "" {
+			panel.Cover = anilistData.CoverImage.Medium
+		}
+		if anilistData.Format != "" {
+			panel.Type = anilistData.Format
+		} else {
+			panel.Type = anilistData.Type
+		}
+		panel.Status = anilistData.Status
+		panel.Episodes = anilistData.Episodes
+		panel.Score = float64(anilistData.AverageScore) / 10
+		panel.Popularity = anilistData.Popularity
+		panel.Genres = anilistData.Genres
+		panel.Synopsis = anilistData.Description
+		if anilistData.StartDate.Year != 0 {
+			panel.Year = anilistData.StartDate.Year
+		} else if anilistData.SeasonYear != 0 {
+			panel.Year = anilistData.SeasonYear
+		}
+	}
+
+	if jikanData != nil {
+		if panel.Title == "" {
+			if jikanData.TitleEnglish != "" {
+				panel.Title = jikanData.TitleEnglish
+			} else {
+				panel.Title = jikanData.Title
+			}
+		}
+		if panel.TitleEnglish == "" && jikanData.TitleEnglish != "" {
+			panel.TitleEnglish = jikanData.TitleEnglish
+		}
+		if panel.Cover == "" {
+			panel.Cover = jikanData.Images.JPG.LargeImageURL
+			if panel.Cover == "" {
+				panel.Cover = jikanData.Images.JPG.ImageURL
+			}
+		}
+		if panel.Type == "" {
+			panel.Type = jikanData.Type
+		}
+		if panel.Status == "" {
+			panel.Status = jikanData.Status
+		}
+		if panel.Episodes == 0 {
+			panel.Episodes = jikanData.Episodes
+		}
+		if panel.Score == 0 {
+			panel.Score = jikanData.Score
+		}
+		if panel.Rank == 0 {
+			panel.Rank = jikanData.Rank
+		}
+		if panel.Popularity == 0 {
+			panel.Popularity = jikanData.Popularity
+		}
+		if panel.Year == 0 {
+			if y, ok := jikanData.Year.(float64); ok {
+				panel.Year = int(y)
+			}
+		}
+		if len(panel.Genres) == 0 {
+			genres := make([]string, 0, len(jikanData.Genres))
+			for _, g := range jikanData.Genres {
+				genres = append(genres, g.Name)
+			}
+			panel.Genres = genres
+		}
+		if panel.Synopsis == "" {
+			panel.Synopsis = jikanData.Synopsis
+		}
+	}
+
+	return panel
+}
+
+func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
+	if end > len(m.searchState.Results) {
+		end = len(m.searchState.Results)
+	}
+
+	anilistIDs := make([]int, 0)
+	anilistIndexMap := make(map[int]int)
+	for i := start; i < end; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		anime := m.searchState.Results[i]
+		if anime.AniListID > 0 && !m.anilistClient.IsCached(anime.AniListID) {
+			anilistIDs = append(anilistIDs, anime.AniListID)
+			anilistIndexMap[anime.AniListID] = i
+		}
+	}
+
+	if len(anilistIDs) > 0 {
+		batchSize := 10
+		for i := 0; i < len(anilistIDs); i += batchSize {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			batchEnd := i + batchSize
+			if batchEnd > len(anilistIDs) {
+				batchEnd = len(anilistIDs)
+			}
+			batch := anilistIDs[i:batchEnd]
+			batchCtx, batchCancel := context.WithTimeout(ctx, 10*time.Second)
+			_, _ = m.anilistClient.GetAnimeBatch(batchCtx, batch)
+			batchCancel()
+		}
+	}
+
+	malIDs := make([]int, 0)
+	for i := start; i < end; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		anime := m.searchState.Results[i]
+		if anime.MALID > 0 && !m.jikanClient.IsCached(anime.MALID) {
+			malIDs = append(malIDs, anime.MALID)
+		}
+	}
+
+	for _, malID := range malIDs {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		dataCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, _ = m.jikanClient.GetAnime(dataCtx, malID)
+		cancel()
+		time.Sleep(350 * time.Millisecond)
+	}
+
+	for i := start; i < end; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		anime := m.searchState.Results[i]
+		if anime.MALID == 0 {
+			continue
+		}
+		if _, ok := m.episodeTitlesCache[i]; ok {
+			continue
+		}
+		dataCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		episodes, err := m.jikanClient.GetEpisodes(dataCtx, anime.MALID)
+		cancel()
+		if err == nil && len(episodes) > 0 {
+			titles := make([]string, len(episodes))
+			for j, ep := range episodes {
+				titles[j] = ep.Title
+			}
+			m.episodeTitlesCache[i] = titles
+		}
+		time.Sleep(350 * time.Millisecond)
 	}
 }
 
@@ -521,7 +1004,9 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		m.episodeState.Selected = 0
 
 		var episodeTitles []string
-		if malID > 0 {
+		if titles, ok := m.episodeTitlesCache[m.searchState.Selected]; ok {
+			episodeTitles = titles
+		} else if malID > 0 {
 			jikanEpisodes, err := m.jikanClient.GetEpisodes(ctx, malID)
 			if err == nil && len(jikanEpisodes) > 0 {
 				episodeTitles = make([]string, len(jikanEpisodes))
@@ -534,6 +1019,65 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		m.episodeState.Loading = false
 
 		return EpisodesLoadedMsg{Episodes: epList, EpisodeTitles: episodeTitles, Error: nil}
+	}
+}
+
+func (m *SearchModel) fetchEpisodeMetadata() tea.Cmd {
+	if m.episodeState.Selected >= len(m.episodeState.Episodes) {
+		m.episodeState.EpisodeMetadata = nil
+		m.episodeState.MetadataLoading = false
+		return nil
+	}
+
+	anime := m.searchState.Results[m.searchState.Selected]
+	if anime == nil || anime.MALID == 0 {
+		m.episodeState.EpisodeMetadata = nil
+		m.episodeState.MetadataLoading = false
+		return nil
+	}
+
+	epNumStr := m.episodeState.Episodes[m.episodeState.Selected]
+	cacheKey := fmt.Sprintf("%d-%s", anime.MALID, epNumStr)
+
+	if cached, ok := m.episodeMetadataCache[cacheKey]; ok {
+		m.episodeState.EpisodeMetadata = buildEpisodeMetadataPanel(cached)
+		m.episodeState.MetadataLoading = false
+		return nil
+	}
+
+	epNum, err := strconv.ParseFloat(epNumStr, 64)
+	if err != nil {
+		m.episodeState.EpisodeMetadata = nil
+		m.episodeState.MetadataLoading = false
+		return nil
+	}
+
+	idx := m.episodeState.Selected
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		episode, err := m.jikanClient.GetEpisode(ctx, anime.MALID, int(epNum))
+		if err != nil {
+			return EpisodeMetadataLoadedMsg{Metadata: nil, Index: idx}
+		}
+
+		m.episodeMetadataCache[cacheKey] = episode
+		return EpisodeMetadataLoadedMsg{Metadata: buildEpisodeMetadataPanel(episode), Index: idx}
+	}
+}
+
+func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
+	return &EpisodeMetadataPanel{
+		Title:         ep.Title,
+		TitleJapanese: ep.TitleJapanese,
+		Aired:         ep.Aired,
+		Score:         ep.Score,
+		Filler:        ep.Filler,
+		Recap:         ep.Recap,
+		Synopsis:      ep.Synopsis,
+		Duration:      ep.Duration,
 	}
 }
 
@@ -599,29 +1143,29 @@ func makeList(title string, km keymap) list.Model {
 
 	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color("#F2BB05")).
-		Foreground(lipgloss.Color("#F2BB05")).
+		BorderForeground(lipgloss.Color("#9d4edd")).
+		Foreground(lipgloss.Color("#9d4edd")).
 		Padding(0, 0, 0, 1)
 
 	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color("#F2BB05")).
-		Foreground(lipgloss.Color("#B6C2D9")).
+		BorderForeground(lipgloss.Color("#9d4edd")).
+		Foreground(lipgloss.Color("#f4f4f6")).
 		Padding(0, 0, 0, 1)
 
 	delegate.Styles.NormalTitle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#B6C2D9")).
+		Foreground(lipgloss.Color("#f4f4f6")).
 		Padding(0, 0, 0, 1)
 
 	delegate.Styles.NormalDesc = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#3D348B")).
+		Foreground(lipgloss.Color("#9d4edd")).
 		Padding(0, 0, 0, 1)
 
 	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.Title = title
 	l.Styles.Title = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F2BB05")).
-		Background(lipgloss.Color("#3D348B")).
+		Foreground(lipgloss.Color("#9d4edd")).
+		Background(lipgloss.Color("#f4f4f6")).
 		Padding(0, 1).
 		Bold(true)
 	l.SetShowStatusBar(false)
@@ -661,12 +1205,17 @@ func truncateSynopsis(s string, maxLen int) string {
 	return s[:lastSpace] + "..."
 }
 
+type MetadataFetchTriggered struct {
+	Index int
+}
+
 type SearchResultsMsg struct {
 	Results []*source.Anime
 }
 
 type MetadataLoadedMsg struct {
 	Metadata *MetadataPanel
+	Index    int
 }
 
 type EpisodesLoadedMsg struct {
@@ -682,6 +1231,8 @@ type TUIErrorMsg struct {
 type SearchErrorMsg struct {
 	Err error
 }
+
+type progressTickMsg struct{}
 
 func RunSearch() (*SelectionResult, error) {
 	model := NewSearchModel()

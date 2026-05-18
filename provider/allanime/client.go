@@ -40,7 +40,7 @@ func NewAllanimeClient() *AllanimeClient {
 // Search shows via AllAnime GraphQL
 func (c *AllanimeClient) SearchShows(ctx context.Context, query string, limit int, page int, translationType string) ([]ShowNode, error) {
 	// Use full query matching ani-cli
-	searchQuery := `query( $search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { edges { _id name malId thumbnail availableEpisodes __typename } }}`
+	searchQuery := `query( $search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { edges { _id name malId aniListId thumbnail availableEpisodes __typename } }}`
 
 	variables := map[string]interface{}{
 		"search": map[string]interface{}{
@@ -400,6 +400,13 @@ func (c *AllanimeClient) MapToAnime(show *ShowNode) *source.Anime {
 	if show.MalID != "" {
 		if malID, err := strconv.Atoi(show.MalID); err == nil {
 			anime.MALID = malID
+		}
+	}
+
+	// Parse aniListId from string to int
+	if show.AniListID != "" {
+		if aniListID, err := strconv.Atoi(show.AniListID); err == nil {
+			anime.AniListID = aniListID
 		}
 	}
 

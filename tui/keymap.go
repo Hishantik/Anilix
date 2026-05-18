@@ -24,7 +24,7 @@ func newKeymap() keymap {
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("enter", "select"),
+			key.WithHelp("enter", "search/select"),
 		),
 		Back: key.NewBinding(
 			key.WithKeys("esc"),
@@ -46,7 +46,7 @@ func newKeymap() keymap {
 }
 
 func (k keymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Select, k.Back, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Select, k.Search, k.Back, k.Quit}
 }
 
 func (k keymap) FullHelp() [][]key.Binding {

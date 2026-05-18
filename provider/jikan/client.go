@@ -97,6 +97,13 @@ func (c *JikanClient) SearchAnime(ctx context.Context, query string) (*AnimeResp
 }
 
 // GetAnime fetches full anime details by MAL ID (with caching)
+func (c *JikanClient) IsCached(malID int) bool {
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+	_, ok := c.cache[malID]
+	return ok
+}
+
 func (c *JikanClient) GetAnime(ctx context.Context, malID int) (*AnimeData, error) {
 	// Check cache first
 	c.cacheMu.RLock()
@@ -155,4 +162,28 @@ func (c *JikanClient) GetEpisodes(ctx context.Context, malID int) ([]Episode, er
 	}
 
 	return result.Data, nil
+}
+
+// GetEpisode fetches a single episode by MAL ID and episode number
+func (c *JikanClient) GetEpisode(ctx context.Context, malID int, episodeNumber int) (*Episode, error) {
+	c.rateLimiter.waitForToken()
+
+	url := fmt.Sprintf("%s/anime/%d/episodes/%d", c.baseURL, malID, episodeNumber)
+
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
+	if err != nil {
+		return nil, fmt.Errorf("curl failed: %w", err)
+	}
+
+	var result EpisodeSingleResponse
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.Data, nil
 }

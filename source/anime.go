@@ -8,6 +8,7 @@ type Anime struct {
 	Genres       []string
 	Status       string
 	MALID        int    // MyAnimeList ID for metadata linkage
+	AniListID    int    // AniList ID for metadata linkage
 	AllAnimeID   string // AllAnime show ID for episode/streams
 	EpisodeCount int    // Total episode count
 	Type         string // "TV", "Movie", "OVA", etc.

@@ -3,10 +3,10 @@ package style
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	Title      = NewColored("#F2BB05", "#3D348B").Padding(0, 1).Render
-	ErrorTitle = NewColored("#E2294F", "#3D348B").Padding(0, 1).Render
-	SubTitle   = NewColored("#EAEAEA", "#3D348B").Padding(0, 1).Render
-	DubTitle   = NewColored("#EAEAEA", "#F2BB05").Padding(0, 1).Render
+	Title      = NewColored("#9d4edd", "#f4f4f6").Padding(0, 1).Render
+	ErrorTitle = NewColored("#9d4edd", "#f4f4f6").Padding(0, 1).Render
+	SubTitle   = NewColored("#f4f4f6", "#9d4edd").Padding(0, 1).Render
+	DubTitle   = NewColored("#f4f4f6", "#9d4edd").Padding(0, 1).Render
 )
 
 func Tag(foreground, background lipgloss.Color) func(string) string {

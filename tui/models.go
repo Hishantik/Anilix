@@ -32,10 +32,11 @@ type SearchState struct {
 	TranslationType string
 }
 
-// MetadataPanel holds Jikan metadata to display on the right panel
+// MetadataPanel holds merged metadata to display on the right panel
 type MetadataPanel struct {
 	Title        string
 	TitleEnglish string
+	TitleNative  string
 	Cover        string
 	Year         int
 	Type         string
@@ -46,16 +47,31 @@ type MetadataPanel struct {
 	Popularity   int
 	Genres       []string
 	Synopsis     string
+	Source       string // "Jikan", "AniList", or "Jikan + AniList"
 }
 
 // EpisodeState holds the state for episode selection
 type EpisodeState struct {
-	AnimeID       string
-	Episodes      []string
-	EpisodeTitles []string
-	Selected      int
-	Loading       bool
-	Err           error
+	AnimeID           string
+	Episodes          []string
+	EpisodeTitles     []string
+	Selected          int
+	Loading           bool
+	Err               error
+	EpisodeMetadata   *EpisodeMetadataPanel
+	MetadataLoading   bool
+}
+
+// EpisodeMetadataPanel holds metadata for a single episode
+type EpisodeMetadataPanel struct {
+	Title         string
+	TitleJapanese string
+	Aired         string
+	Score         float64
+	Filler        bool
+	Recap         bool
+	Synopsis      string
+	Duration      int
 }
 
 // NewSearchState creates a new search state

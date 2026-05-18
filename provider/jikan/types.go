@@ -55,10 +55,22 @@ type EpisodesResponse struct {
 
 // Episode represents a single episode
 type Episode struct {
-	MalID     int    `json:"mal_id"`
-	EpisodeID int    `json:"episode_id"`
-	Title     string `json:"title"`
-	TitleJapanese string `json:"title_japanese"`
-	Episode   string `json:"episode"`
-	URL       string `json:"url"`
+	MalID         int     `json:"mal_id"`
+	EpisodeID     int     `json:"episode_id"`
+	Title         string  `json:"title"`
+	TitleJapanese string  `json:"title_japanese"`
+	TitleRomanji  string  `json:"title_romanji"`
+	Episode       string  `json:"episode"`
+	URL           string  `json:"url"`
+	Aired         string  `json:"aired"`
+	Score         float64 `json:"score"`
+	Filler        bool    `json:"filler"`
+	Recap         bool    `json:"recap"`
+	Synopsis      string  `json:"synopsis"`
+	Duration      int     `json:"duration"`
+}
+
+// EpisodeSingleResponse represents the Jikan API single episode response
+type EpisodeSingleResponse struct {
+	Data Episode `json:"data"`
 }
