@@ -40,19 +40,21 @@ func (p *Player) Launch(url string, opts Options) error {
 		args = p.iinaArgs(url, opts)
 	case "mpv-android":
 		args = p.mpvAndroidArgs(url, opts)
+	case "vlc-android":
+		args = p.vlcAndroidArgs(url, opts)
 	default:
 		return fmt.Errorf("unknown player: %s", p.Name)
 	}
 
-	if p.Name == "mpv-android" {
-		fmt.Fprintf(os.Stderr, "[mpv-android] launching: am %v\n", args)
+	if p.Name == "mpv-android" || p.Name == "vlc-android" {
+		fmt.Fprintf(os.Stderr, "[%s] launching: am %v\n", p.Name, args)
 		cmd := exec.Command("am", args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("am start failed: %s %w", string(out), err)
 		}
 		if len(out) > 0 {
-			fmt.Fprintf(os.Stderr, "[mpv-android] am output: %s\n", string(out))
+			fmt.Fprintf(os.Stderr, "[%s] am output: %s\n", p.Name, string(out))
 		}
 		return nil
 	}
@@ -117,9 +119,27 @@ func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
 	if opts.Title != "" {
 		args = append(args, "--es", "title", opts.Title)
 	}
+	return args
+}
+
+func (p *Player) vlcAndroidArgs(url string, opts Options) []string {
+	mimeType := "video/*"
+	lower := strings.ToLower(url)
+	if strings.HasSuffix(lower, ".m3u8") || strings.Contains(lower, ".m3u8?") {
+		mimeType = "application/x-mpegURL"
+	}
+	args := []string{
+		"start",
+		"-a", "android.intent.action.VIEW",
+		"-t", mimeType,
+		"-d", url,
+		"-n", "org.videolan.vlc/.gui.video.VideoPlayerActivity",
+	}
+	if opts.Title != "" {
+		args = append(args, "--es", "title", opts.Title)
+	}
 	if opts.Referrer != "" {
-		headers := "Referer:" + opts.Referrer
-		args = append(args, "--esa", "headers", headers)
+		args = append(args, "--es", "http-referrer", opts.Referrer)
 	}
 	return args
 }
@@ -135,6 +155,8 @@ func FromString(name string) *Player {
 		return Iina
 	case "mpv-android":
 		return MpvAndroid
+	case "vlc-android":
+		return VlcAndroid
 	default:
 		return Mpv // default to mpv
 	}

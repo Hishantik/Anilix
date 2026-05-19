@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1162,14 +1163,23 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 
 func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *source.Stream {
 	d := &player.Detector{}
-	p := d.Preferred()
 
-	for _, s := range streams {
+	// On Android, sort streams: no-referrer first (more likely to work)
+	ordered := make([]*source.Stream, len(streams))
+	copy(ordered, streams)
+	if player.IsAndroid() {
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return !ordered[i].NeedsReferrer && ordered[j].NeedsReferrer
+		})
+	}
+
+	for _, s := range ordered {
 		url := s.URL
 		if strings.HasPrefix(url, "//") {
 			url = "https:" + url
 		}
 
+		p := d.PreferredForReferrer(s.NeedsReferrer)
 		opts := player.Options{
 			Title:     fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
 			Referrer:  s.Referer,
@@ -1178,7 +1188,8 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 			opts.Subtitles = append(opts.Subtitles, sub.URL)
 		}
 
-		fmt.Fprintf(os.Stderr, "[play] attempting: %s (referer: %s)\n", url, s.Referer)
+		fmt.Fprintf(os.Stderr, "[play] attempting: %s (provider: %s, referrer: %s, needsReferrer: %v, player: %s)\n",
+			url, s.Provider, s.Referer, s.NeedsReferrer, p.Name)
 		if err := p.Launch(url, opts); err == nil {
 			return s
 		} else {

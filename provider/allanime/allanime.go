@@ -208,10 +208,11 @@ func extractStreams(ctx context.Context, src SourceUrl) []*source.Stream {
 	// Handle tools.fast4speed.rsvp URLs - direct video URLs (instant, no extraction needed)
 	if strings.Contains(streamUrl, "tools.fast4speed.rsvp") {
 		return []*source.Stream{{
-			Provider: "youtube",
-			Quality:  "auto",
-			URL:      streamUrl,
-			Referer:  Referer,
+			Provider:      "youtube",
+			Quality:       "auto",
+			URL:           streamUrl,
+			Referer:       Referer,
+			NeedsReferrer: false,
 		}}
 	}
 
@@ -267,6 +268,7 @@ func extractStreams(ctx context.Context, src SourceUrl) []*source.Stream {
 					s.URL = url
 					s.Provider = providerName
 					s.Referer = streamUrl
+					s.NeedsReferrer = needsReferrerProvider(providerName)
 					result = append(result, s)
 				}
 			}
@@ -326,10 +328,11 @@ func extractClockURL(ctx context.Context, clockPath, providerName string) []*sou
 	}
 
 	return []*source.Stream{{
-		Provider: providerName,
-		Quality:  "auto",
-		URL:      link,
-		Referer:  Referer,
+		Provider:      providerName,
+		Quality:       "auto",
+		URL:           link,
+		Referer:       Referer,
+		NeedsReferrer: needsReferrerProvider(providerName),
 	}}
 }
 
@@ -390,6 +393,16 @@ func isPlayableURL(url string) bool {
 		}
 	}
 	return true
+}
+
+// needsReferrerProvider returns true if the provider typically requires a Referer header
+func needsReferrerProvider(provider string) bool {
+	switch strings.ToLower(provider) {
+	case "youtube", "sharepoint":
+		return false
+	default:
+		return true
+	}
 }
 
 // SetTranslation sets sub or dub preference

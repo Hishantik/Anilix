@@ -12,12 +12,23 @@ func IsAndroid() bool {
 	return runtime.GOOS == "android"
 }
 
+var (
+	VlcAndroid = &Player{Name: "vlc-android"}
+)
+
 func (d *Detector) Detect() []string {
 	if IsAndroid() {
+		players := []string{}
 		if isMpvAndroidInstalled() {
-			return []string{"mpv-android"}
+			players = append(players, "mpv-android")
 		}
-		return nil
+		if isVlcAndroidInstalled() {
+			players = append(players, "vlc-android")
+		}
+		if len(players) == 0 {
+			return nil
+		}
+		return players
 	}
 
 	players := []string{"mpv", "vlc"}
@@ -40,6 +51,9 @@ func (d *Detector) Preferred() *Player {
 		if isMpvAndroidInstalled() {
 			return MpvAndroid
 		}
+		if isVlcAndroidInstalled() {
+			return VlcAndroid
+		}
 		return MpvAndroid // fallback, will fail on Launch
 	}
 
@@ -57,6 +71,22 @@ func (d *Detector) Preferred() *Player {
 	return Mpv
 }
 
+func (d *Detector) PreferredForReferrer(needsReferrer bool) *Player {
+	if IsAndroid() {
+		if !needsReferrer && isMpvAndroidInstalled() {
+			return MpvAndroid
+		}
+		if isVlcAndroidInstalled() {
+			return VlcAndroid
+		}
+		if isMpvAndroidInstalled() {
+			return MpvAndroid
+		}
+		return MpvAndroid
+	}
+	return d.Preferred()
+}
+
 func IsAvailable(name string) bool {
 	cmd := exec.Command(name, "--version")
 	return cmd.Run() == nil
@@ -64,6 +94,15 @@ func IsAvailable(name string) bool {
 
 func isMpvAndroidInstalled() bool {
 	cmd := exec.Command("pm", "list", "packages", "is.xyz.mpv")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(out) > 0
+}
+
+func isVlcAndroidInstalled() bool {
+	cmd := exec.Command("pm", "list", "packages", "org.videolan.vlc")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
