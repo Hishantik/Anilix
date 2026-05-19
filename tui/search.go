@@ -1166,19 +1166,6 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 		Title: fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
 	}
 
-	// On Android, filter out m3u8 and youtube streams — mpv-android can't play them reliably
-	if player.IsAndroid() {
-		var filtered []*source.Stream
-		for _, s := range streams {
-			if !strings.Contains(s.URL, ".m3u8") && !strings.Contains(s.URL, "youtube") {
-				filtered = append(filtered, s)
-			}
-		}
-		if len(filtered) > 0 {
-			streams = filtered
-		}
-	}
-
 	for _, s := range streams {
 		url := s.URL
 		if strings.HasPrefix(url, "//") {

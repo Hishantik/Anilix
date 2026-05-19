@@ -1,7 +1,6 @@
 package player
 
 import (
-	"os"
 	"os/exec"
 	"runtime"
 )
@@ -10,10 +9,7 @@ type Detector struct{}
 
 // IsAndroid returns true if running on an Android environment.
 func IsAndroid() bool {
-	if _, err := os.Stat("/system/build.prop"); err == nil {
-		return true
-	}
-	return os.Getenv("ANDROID_DATA") != ""
+	return runtime.GOOS == "android"
 }
 
 func (d *Detector) Detect() []string {

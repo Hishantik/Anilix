@@ -124,15 +124,14 @@ func TestMpvAndroidArgs(t *testing.T) {
 	url := "https://example.com/video.m3u8"
 
 	tests := []struct {
-		name         string
-		opts         Options
-		wantReferrer bool
-		wantTitle    bool
+		name      string
+		opts      Options
+		wantTitle bool
 	}{
-		{"basic", Options{}, false, false},
-		{"with referrer", Options{Referrer: "https://example.com"}, true, false},
-		{"with title", Options{Title: "Naruto - Episode 1"}, false, true},
-		{"full", Options{Title: "Naruto - Episode 1", Referrer: "https://example.com"}, true, true},
+		{"basic", Options{}, false},
+		{"with referrer (ignored)", Options{Referrer: "https://example.com"}, false},
+		{"with title", Options{Title: "Naruto - Episode 1"}, true},
+		{"full", Options{Title: "Naruto - Episode 1", Referrer: "https://example.com"}, true},
 	}
 
 	for _, tt := range tests {
@@ -180,17 +179,11 @@ func TestMpvAndroidArgs(t *testing.T) {
 				t.Errorf("mpvAndroidArgs() missing -n is.xyz.mpv/.MPVActivity in args: %v", args)
 			}
 
-			// Verify referrer
-			if tt.wantReferrer {
-				found := false
-				for i, arg := range args {
-					if arg == "--es" && i+2 < len(args) && args[i+1] == "referrer" && args[i+2] == "https://example.com" {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("mpvAndroidArgs() missing --es referrer extra")
+			// Verify referrer is NOT included (mpv-android doesn't support it)
+			for i, arg := range args {
+				if arg == "--es" && i+2 < len(args) && args[i+1] == "referrer" {
+					t.Errorf("mpvAndroidArgs() should not include referrer extra (mpv-android ignores it)")
+					break
 				}
 			}
 

@@ -110,9 +110,6 @@ func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
 	if opts.Title != "" {
 		args = append(args, "--es", "title", opts.Title)
 	}
-	if opts.Referrer != "" {
-		args = append(args, "--es", "referrer", opts.Referrer)
-	}
 	return args
 }
 
