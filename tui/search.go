@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -1162,9 +1163,6 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *source.Stream {
 	d := &player.Detector{}
 	p := d.Preferred()
-	opts := player.Options{
-		Title: fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
-	}
 
 	for _, s := range streams {
 		url := s.URL
@@ -1172,10 +1170,19 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 			url = "https:" + url
 		}
 
-		opts.Referrer = s.Referer
+		opts := player.Options{
+			Title:     fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
+			Referrer:  s.Referer,
+		}
+		for _, sub := range s.Subtitles {
+			opts.Subtitles = append(opts.Subtitles, sub.URL)
+		}
 
+		fmt.Fprintf(os.Stderr, "[play] attempting: %s (referer: %s)\n", url, s.Referer)
 		if err := p.Launch(url, opts); err == nil {
 			return s
+		} else {
+			fmt.Fprintf(os.Stderr, "[play] failed: %v\n", err)
 		}
 	}
 

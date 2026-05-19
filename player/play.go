@@ -2,6 +2,7 @@ package player
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -44,9 +45,14 @@ func (p *Player) Launch(url string, opts Options) error {
 	}
 
 	if p.Name == "mpv-android" {
-		out, err := exec.Command("nohup", append([]string{"am"}, args...)...).CombinedOutput()
+		fmt.Fprintf(os.Stderr, "[mpv-android] launching: am %v\n", args)
+		cmd := exec.Command("am", args...)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("am start failed: %s %w", string(out), err)
+		}
+		if len(out) > 0 {
+			fmt.Fprintf(os.Stderr, "[mpv-android] am output: %s\n", string(out))
 		}
 		return nil
 	}
@@ -104,11 +110,16 @@ func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
 	args := []string{
 		"start",
 		"-a", "android.intent.action.VIEW",
+		"-t", "video/*",
 		"-d", url,
 		"-n", "is.xyz.mpv/.MPVActivity",
 	}
 	if opts.Title != "" {
 		args = append(args, "--es", "title", opts.Title)
+	}
+	if opts.Referrer != "" {
+		headers := "Referer:" + opts.Referrer
+		args = append(args, "--esa", "headers", headers)
 	}
 	return args
 }
