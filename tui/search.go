@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -1188,12 +1187,8 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 			opts.Subtitles = append(opts.Subtitles, sub.URL)
 		}
 
-		fmt.Fprintf(os.Stderr, "[play] attempting: %s (provider: %s, referrer: %s, needsReferrer: %v, player: %s)\n",
-			url, s.Provider, s.Referer, s.NeedsReferrer, p.Name)
 		if err := p.Launch(url, opts); err == nil {
 			return s
-		} else {
-			fmt.Fprintf(os.Stderr, "[play] failed: %v\n", err)
 		}
 	}
 

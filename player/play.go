@@ -2,9 +2,9 @@ package player
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type Player struct {
@@ -47,15 +47,31 @@ func (p *Player) Launch(url string, opts Options) error {
 	}
 
 	if p.Name == "mpv-android" || p.Name == "vlc-android" {
-		fmt.Fprintf(os.Stderr, "[%s] launching: am %v\n", p.Name, args)
+		// Start local proxy so the player can fetch via localhost
+		localURL, stop, err := StartProxy(url, opts.Referrer)
+		if err != nil {
+			return fmt.Errorf("proxy start failed: %w", err)
+		}
+		// Keep proxy alive in background for 30 min
+		go func() {
+			time.Sleep(30 * time.Minute)
+			stop()
+		}()
+
+		// Replace -d URL arg with local proxy URL
+		for i, a := range args {
+			if a == "-d" && i+1 < len(args) {
+				args[i+1] = localURL
+				break
+			}
+		}
+
 		cmd := exec.Command("am", args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("am start failed: %s %w", string(out), err)
 		}
-		if len(out) > 0 {
-			fmt.Fprintf(os.Stderr, "[%s] am output: %s\n", p.Name, string(out))
-		}
+		_ = out
 		return nil
 	}
 	return exec.Command(p.Name, args...).Start()
