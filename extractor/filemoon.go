@@ -13,22 +13,28 @@ import (
 
 const filemoonReferer = "https://filemoon.sx/"
 
+// FilemoonExtractor resolves streams from filemoon.sx embed pages.
+// It handles encrypted payloads and direct m3u8 URLs.
 type FilemoonExtractor struct{}
 
+// NewFilemoonExtractor creates a new FilemoonExtractor for registration.
 func NewFilemoonExtractor() *FilemoonExtractor {
 	return &FilemoonExtractor{}
 }
 
+// Name returns the extractor identifier.
 func (e *FilemoonExtractor) Name() string {
 	return "filemoon"
 }
 
+// CanHandle returns true if the URL contains "filemoon" or "moon"+"file" in its domain.
 func (e *FilemoonExtractor) CanHandle(url string) bool {
 	lower := strings.ToLower(url)
 	return strings.Contains(lower, "filemoon") ||
 		strings.Contains(lower, "moon") && strings.Contains(lower, "file")
 }
 
+// Extract fetches the filemoon embed page and resolves streams via encrypted data or m3u8.
 func (e *FilemoonExtractor) Extract(ctx context.Context, url, referer string) ([]*source.Stream, error) {
 	if referer == "" {
 		referer = filemoonReferer
@@ -66,6 +72,7 @@ func (e *FilemoonExtractor) Extract(ctx context.Context, url, referer string) ([
 	return e.parseDecryptedStream(decrypted, referer)
 }
 
+// extractFromM3U8 parses an m3u8 master playlist into quality variant streams.
 func (e *FilemoonExtractor) extractFromM3U8(ctx context.Context, m3u8URL, referer string) ([]*source.Stream, error) {
 	variants, err := ParseMasterPlaylistCurl(ctx, m3u8URL)
 	if err != nil {
@@ -89,6 +96,7 @@ func (e *FilemoonExtractor) extractFromM3U8(ctx context.Context, m3u8URL, refere
 	return streams, nil
 }
 
+// parseDecryptedStream parses decrypted JSON or raw m3u8 content into stream objects.
 func (e *FilemoonExtractor) parseDecryptedStream(data, referer string) ([]*source.Stream, error) {
 	// Try to parse as JSON
 	var streamData struct {
@@ -121,6 +129,7 @@ func (e *FilemoonExtractor) parseDecryptedStream(data, referer string) ([]*sourc
 	return streams, nil
 }
 
+// extractEncryptedData scans HTML for Base64-encoded encrypted video data in various formats.
 func extractEncryptedData(html string) string {
 	// Look for data in script tags or data attributes
 	patterns := []string{
@@ -148,6 +157,7 @@ func extractEncryptedData(html string) string {
 	return ""
 }
 
+// extractM3U8URL finds m3u8 playlist URLs in the page HTML.
 func extractM3U8URL(html string) string {
 	re := regexp.MustCompile(`(?i)(https?://[^\s"']+\.m3u8[^\s"']*)`)
 	matches := re.FindStringSubmatch(html)
@@ -157,6 +167,7 @@ func extractM3U8URL(html string) string {
 	return ""
 }
 
+// ExtractSubtitles fetches the embed page and extracts subtitle track URLs.
 func (e *FilemoonExtractor) ExtractSubtitles(ctx context.Context, url, referer string) ([]string, error) {
 	if referer == "" {
 		referer = filemoonReferer

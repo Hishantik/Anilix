@@ -13,22 +13,29 @@ import (
 
 const hianimeReferer = "https://hianime.com/"
 
+// HianimeExtractor resolves streams from hianime embed pages.
+// It handles both direct m3u8 URLs and AES-encrypted payloads.
 type HianimeExtractor struct{}
 
+// NewHianimeExtractor creates a new HianimeExtractor instance for registration.
 func NewHianimeExtractor() *HianimeExtractor {
 	return &HianimeExtractor{}
 }
 
+// Name returns the extractor identifier used for priority lookup.
 func (e *HianimeExtractor) Name() string {
 	return "hianime"
 }
 
+// CanHandle returns true if the URL contains "hianime" in its domain.
 func (e *HianimeExtractor) CanHandle(url string) bool {
 	lower := strings.ToLower(url)
 	return strings.Contains(lower, "hianime") ||
 		strings.Contains(lower, "hianime.com")
 }
 
+// Extract fetches the hianime embed page and resolves stream URLs.
+// It tries m3u8 extraction first, falling back to encrypted data decryption.
 func (e *HianimeExtractor) Extract(ctx context.Context, url, referer string) ([]*source.Stream, error) {
 	if referer == "" {
 		referer = hianimeReferer
@@ -63,6 +70,7 @@ func (e *HianimeExtractor) Extract(ctx context.Context, url, referer string) ([]
 	return e.extractFromM3U8(ctx, m3u8URL, referer)
 }
 
+// extractFromM3U8 parses an m3u8 master playlist and returns all quality variants as streams.
 func (e *HianimeExtractor) extractFromM3U8(ctx context.Context, m3u8URL, referer string) ([]*source.Stream, error) {
 	variants, err := ParseMasterPlaylistCurl(ctx, m3u8URL)
 	if err != nil {
@@ -86,6 +94,8 @@ func (e *HianimeExtractor) extractFromM3U8(ctx context.Context, m3u8URL, referer
 	return streams, nil
 }
 
+// parseDecryptedStream parses the decrypted JSON payload into stream objects.
+// Handles both JSON with sources array and raw m3u8 content.
 func (e *HianimeExtractor) parseDecryptedStream(data, referer string) ([]*source.Stream, error) {
 	var streamData struct {
 		Sources []struct {
@@ -121,6 +131,7 @@ func (e *HianimeExtractor) parseDecryptedStream(data, referer string) ([]*source
 	return streams, nil
 }
 
+// extractM3U8URL scans HTML for m3u8 URLs in script tags, data attributes, or direct links.
 func (e *HianimeExtractor) extractM3U8URL(html string) string {
 	// Look for m3u8 URL in the page
 	patterns := []string{
@@ -140,6 +151,7 @@ func (e *HianimeExtractor) extractM3U8URL(html string) string {
 	return ""
 }
 
+// extractEncryptedData finds Base64-encoded encrypted stream data in the page HTML.
 func (e *HianimeExtractor) extractEncryptedData(html string) string {
 	patterns := []string{
 		`data-value="([^"]+)"`,
@@ -158,6 +170,7 @@ func (e *HianimeExtractor) extractEncryptedData(html string) string {
 	return ""
 }
 
+// ExtractSubtitles fetches the embed page and extracts subtitle track URLs from it.
 func (e *HianimeExtractor) ExtractSubtitles(ctx context.Context, url, referer string) ([]string, error) {
 	if referer == "" {
 		referer = hianimeReferer

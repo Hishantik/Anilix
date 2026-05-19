@@ -1,7 +1,3 @@
-# Reference projects (do not track)
-ani-cli/
-mangal/
-
 # Build output
 anilix
 *.sh
@@ -14,4 +10,3 @@ anilix
 # OS
 .DS_Store
 
-*.md

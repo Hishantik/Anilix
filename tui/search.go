@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -609,7 +610,7 @@ func (m *SearchModel) renderEpisodeMetadata(width int) []string {
 
 	lines = append(lines, "")
 	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render("Synopsis:"))
-	synopsis := meta.Synopsis
+	synopsis := stripHTML(meta.Synopsis)
 	if width < 60 {
 		maxLines := m.height / 2
 		charWidth := width - paddingStyle.GetHorizontalFrameSize()
@@ -651,7 +652,7 @@ func (m *SearchModel) renderMetadata(width int) []string {
 
 	lines = append(lines, "")
 	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render("Synopsis:"))
-	synopsis := meta.Synopsis
+	synopsis := stripHTML(meta.Synopsis)
 	if width < 60 {
 		maxLines := m.height / 2
 		charWidth := width - paddingStyle.GetHorizontalFrameSize()
@@ -1260,6 +1261,15 @@ func truncateSynopsis(s string, maxLen int) string {
 		return s[:maxLen] + "..."
 	}
 	return s[:lastSpace] + "..."
+}
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+func stripHTML(s string) string {
+	s = strings.ReplaceAll(s, "<br>", "\n")
+	s = strings.ReplaceAll(s, "<br/>", "\n")
+	s = strings.ReplaceAll(s, "<br />", "\n")
+	return htmlTagRe.ReplaceAllString(s, "")
 }
 
 type MetadataFetchTriggered struct {

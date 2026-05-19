@@ -1,5 +1,7 @@
 package source
 
+// Anime represents a single anime title with its metadata from providers like Jikan/AniList.
+// It serves as the central data model passed between search, episode listing, and stream resolution.
 type Anime struct {
 	Name         string
 	URL          string
@@ -19,6 +21,7 @@ type Anime struct {
 	Source       Source
 }
 
+// String returns the anime name for display in lists and TUI selection.
 func (a *Anime) String() string {
 	return a.Name
 }

@@ -6,31 +6,36 @@ import (
 	"github.com/anilix/anilix/source"
 )
 
-// Extractor extracts streams from provider URLs
+// Extractor is the interface for resolving playable stream URLs from embed/hosting pages.
+// Each extractor handles a specific hosting provider (e.g., hianime, filemoon, wixmp).
+// Extractors are registered at init time and resolved by URL pattern matching.
 type Extractor interface {
-	// Name returns the provider name
+	// Name returns the extractor's identifier, used for priority ordering and logging.
 	Name() string
 
-	// CanHandle returns true if this extractor can handle the URL
+	// CanHandle returns true if this extractor recognizes the URL's hosting provider.
 	CanHandle(url string) bool
 
-	// Extract extracts streams from the provider URL
+	// Extract fetches the embed page and resolves direct stream URLs (m3u8/mp4).
 	Extract(ctx context.Context, url, referer string) ([]*source.Stream, error)
 
-	// ExtractSubtitles extracts subtitle URLs from the provider page (optional)
+	// ExtractSubtitles extracts subtitle track URLs from the embed page (optional).
 	ExtractSubtitles(ctx context.Context, url, referer string) ([]string, error)
 }
 
-// NoSubtitlesExtractor wraps an extractor to return empty subtitles
+// NoSubtitlesExtractor is a convenience wrapper for extractors that don't support subtitles.
+// It implements Extractor by embedding another extractor and returning nil for ExtractSubtitles.
 type NoSubtitlesExtractor struct {
 	Extractor
 }
 
+// ExtractSubtitles returns nil since this extractor doesn't support subtitle extraction.
 func (e *NoSubtitlesExtractor) ExtractSubtitles(ctx context.Context, url, referer string) ([]string, error) {
 	return nil, nil
 }
 
-// Priority determines extraction order (lower = higher priority)
+// ProviderPriority controls the extraction order when multiple extractors match a URL.
+// Lower number = higher priority. This mirrors ani-cli's provider preference order.
 var ProviderPriority = map[string]int{
 	"hianime":  1,
 	"filemoon": 2,
@@ -38,20 +43,21 @@ var ProviderPriority = map[string]int{
 	"youtube":  4,
 }
 
-// Default extractors
+// extractors holds all registered extractors, populated via init() calls.
 var extractors []Extractor
 
-// Register adds an extractor to the list
+// Register adds an extractor to the global registry. Called from each extractor's init().
 func Register(e Extractor) {
 	extractors = append(extractors, e)
 }
 
-// All returns all registered extractors
+// All returns all registered extractors for iteration during stream resolution.
 func All() []Extractor {
 	return extractors
 }
 
-// Resolve finds an extractor that can handle the URL
+// Resolve finds the first registered extractor that can handle the given URL.
+// Returns nil if no extractor matches, allowing callers to skip unsupported URLs.
 func Resolve(url string) Extractor {
 	for _, e := range extractors {
 		if e.CanHandle(url) {

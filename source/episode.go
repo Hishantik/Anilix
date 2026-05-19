@@ -2,6 +2,8 @@ package source
 
 import "strconv"
 
+// Episode represents a single episode within an anime season.
+// It links back to its parent Anime for context during stream resolution.
 type Episode struct {
 	Number float64
 	Title  string
@@ -10,6 +12,8 @@ type Episode struct {
 	Anime  *Anime
 }
 
+// String returns a display-friendly episode identifier: the title if available,
+// otherwise the episode number (integer or decimal for half-episodes).
 func (e *Episode) String() string {
 	if e.Title != "" {
 		return e.Title
