@@ -17,9 +17,10 @@ type Options struct {
 }
 
 var (
-	Mpv  = &Player{Name: "mpv"}
-	Vlc  = &Player{Name: "vlc"}
-	Iina = &Player{Name: "iina"}
+	Mpv        = &Player{Name: "mpv"}
+	Vlc        = &Player{Name: "vlc"}
+	Iina       = &Player{Name: "iina"}
+	MpvAndroid = &Player{Name: "mpv-android"}
 )
 
 func (p *Player) String() string {
@@ -36,10 +37,19 @@ func (p *Player) Launch(url string, opts Options) error {
 		args = p.vlcArgs(url, opts)
 	case "iina":
 		args = p.iinaArgs(url, opts)
+	case "mpv-android":
+		args = p.mpvAndroidArgs(url, opts)
 	default:
 		return fmt.Errorf("unknown player: %s", p.Name)
 	}
 
+	if p.Name == "mpv-android" {
+		out, err := exec.Command("nohup", append([]string{"am"}, args...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("am start failed: %s %w", string(out), err)
+		}
+		return nil
+	}
 	return exec.Command(p.Name, args...).Start()
 }
 
@@ -90,6 +100,22 @@ func (p *Player) iinaArgs(url string, opts Options) []string {
 	return args
 }
 
+func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
+	args := []string{
+		"start",
+		"-a", "android.intent.action.VIEW",
+		"-d", url,
+		"-n", "is.xyz.mpv/.MPVActivity",
+	}
+	if opts.Title != "" {
+		args = append(args, "--es", "title", opts.Title)
+	}
+	if opts.Referrer != "" {
+		args = append(args, "--es", "referrer", opts.Referrer)
+	}
+	return args
+}
+
 // FromString returns a Player from name string
 func FromString(name string) *Player {
 	switch strings.ToLower(name) {
@@ -99,6 +125,8 @@ func FromString(name string) *Player {
 		return Vlc
 	case "iina":
 		return Iina
+	case "mpv-android":
+		return MpvAndroid
 	default:
 		return Mpv // default to mpv
 	}

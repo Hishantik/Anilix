@@ -13,6 +13,7 @@ func TestPlayerString(t *testing.T) {
 		{"mpv", Mpv, "mpv"},
 		{"vlc", Vlc, "vlc"},
 		{"iina", Iina, "iina"},
+		{"mpv-android", MpvAndroid, "mpv-android"},
 	}
 
 	for _, tt := range tests {
@@ -34,6 +35,8 @@ func TestFromString(t *testing.T) {
 		{"MPV uppercase", "MPV", "mpv"},
 		{"vlc", "vlc", "vlc"},
 		{"iina", "iina", "iina"},
+		{"mpv-android", "mpv-android", "mpv-android"},
+		{"MPV-ANDROID uppercase", "MPV-ANDROID", "mpv-android"},
 		{"unknown defaults to mpv", "unknown", "mpv"},
 		{"empty defaults to mpv", "", "mpv"},
 	}
@@ -113,5 +116,97 @@ func TestVlcArgs(t *testing.T) {
 	}
 	if !foundURL {
 		t.Error("vlcArgs() missing URL")
+	}
+}
+
+func TestMpvAndroidArgs(t *testing.T) {
+	p := &Player{Name: "mpv-android"}
+	url := "https://example.com/video.m3u8"
+
+	tests := []struct {
+		name         string
+		opts         Options
+		wantReferrer bool
+		wantTitle    bool
+	}{
+		{"basic", Options{}, false, false},
+		{"with referrer", Options{Referrer: "https://example.com"}, true, false},
+		{"with title", Options{Title: "Naruto - Episode 1"}, false, true},
+		{"full", Options{Title: "Naruto - Episode 1", Referrer: "https://example.com"}, true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := p.mpvAndroidArgs(url, tt.opts)
+
+			// Verify am start structure
+			if args[0] != "start" {
+				t.Errorf("first arg should be 'start', got %q", args[0])
+			}
+
+			// Verify action
+			foundAction := false
+			for i, arg := range args {
+				if arg == "-a" && i+1 < len(args) && args[i+1] == "android.intent.action.VIEW" {
+					foundAction = true
+					break
+				}
+			}
+			if !foundAction {
+				t.Errorf("mpvAndroidArgs() missing -a android.intent.action.VIEW in args: %v", args)
+			}
+
+			// Verify data URI
+			foundURL := false
+			for i, arg := range args {
+				if arg == "-d" && i+1 < len(args) && args[i+1] == url {
+					foundURL = true
+					break
+				}
+			}
+			if !foundURL {
+				t.Errorf("mpvAndroidArgs() missing -d %q in args: %v", url, args)
+			}
+
+			// Verify activity component
+			foundComponent := false
+			for i, arg := range args {
+				if arg == "-n" && i+1 < len(args) && args[i+1] == "is.xyz.mpv/.MPVActivity" {
+					foundComponent = true
+					break
+				}
+			}
+			if !foundComponent {
+				t.Errorf("mpvAndroidArgs() missing -n is.xyz.mpv/.MPVActivity in args: %v", args)
+			}
+
+			// Verify referrer
+			if tt.wantReferrer {
+				found := false
+				for i, arg := range args {
+					if arg == "--es" && i+2 < len(args) && args[i+1] == "referrer" && args[i+2] == "https://example.com" {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("mpvAndroidArgs() missing --es referrer extra")
+				}
+			}
+
+			// Verify title
+			if tt.wantTitle {
+				found := false
+				for i, arg := range args {
+					if arg == "--es" && i+2 < len(args) && args[i+1] == "title" && args[i+2] == "Naruto - Episode 1" {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("mpvAndroidArgs() missing --es title extra")
+				}
+			}
+		})
 	}
 }

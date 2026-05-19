@@ -13,7 +13,7 @@ func TestDetectorDetect(t *testing.T) {
 	}
 
 	for _, name := range players {
-		if name != "mpv" && name != "vlc" && name != "iina" {
+		if name != "mpv" && name != "vlc" && name != "iina" && name != "mpv-android" {
 			t.Errorf("Unexpected player detected: %s", name)
 		}
 	}
@@ -27,7 +27,7 @@ func TestDetectorPreferred(t *testing.T) {
 		t.Error("Preferred() returned nil")
 	}
 
-	validNames := map[string]bool{"mpv": true, "vlc": true, "iina": true}
+	validNames := map[string]bool{"mpv": true, "vlc": true, "iina": true, "mpv-android": true}
 	if !validNames[preferred.Name] {
 		t.Errorf("Preferred() returned invalid player: %s", preferred.Name)
 	}

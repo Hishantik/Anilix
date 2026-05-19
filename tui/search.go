@@ -158,7 +158,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading, _ = m.loading.Update(msg)
 
 	case progressTickMsg:
-		if m.searchState.Loading || m.episodeState.Loading {
+		if m.searchState.Loading || m.episodeState.Loading || m.episodeState.Playing {
 			elapsed := time.Since(m.progressStart).Seconds()
 			m.progressPercent = math.Min(0.9, elapsed/5.0)
 		}
@@ -266,7 +266,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
 					selectedAnime := m.searchState.Results[m.searchState.Selected]
 					selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
+					m.episodeState.Playing = true
+					m.progressPercent = 0
+					m.progressStart = time.Now()
 					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name))
+					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+						return progressTickMsg{}
+					}))
 					return m, tea.Batch(cmds...)
 				}
 			}
@@ -404,7 +410,15 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.episodeState.MetadataLoading = false
 		}
 
+	case PlayStreamMsg:
+		m.episodeState.Playing = false
+		m.progressPercent = 1.0
+		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
+
 	case TUIErrorMsg:
+		m.episodeState.Playing = false
+		m.progressPercent = 1.0
+		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
 		m.episodeState.Err = msg.Err
 	}
 
@@ -519,6 +533,11 @@ func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
 		lines = append(lines, m.progress.ViewAs(m.progressPercent))
 	}
 
+	if m.episodeState.Playing {
+		lines = append(lines, "")
+		lines = append(lines, m.progress.ViewAs(m.progressPercent))
+	}
+
 	return strings.Join(lines, "\n")
 }
 
@@ -589,8 +608,20 @@ func (m *SearchModel) renderEpisodeMetadata(width int) []string {
 
 	lines = append(lines, "")
 	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render("Synopsis:"))
+	synopsis := meta.Synopsis
+	if width < 60 {
+		maxLines := m.height / 2
+		charWidth := width - paddingStyle.GetHorizontalFrameSize()
+		if charWidth < 1 {
+			charWidth = 1
+		}
+		maxChars := maxLines * charWidth
+		if maxChars > 0 && len(synopsis) > maxChars {
+			synopsis = synopsis[:maxChars] + "..."
+		}
+	}
 	synopsisStyle := style.New().Foreground(lipgloss.Color("#f4f4f6")).Width(width - paddingStyle.GetHorizontalFrameSize())
-	lines = append(lines, synopsisStyle.Render(meta.Synopsis))
+	lines = append(lines, synopsisStyle.Render(synopsis))
 
 	return lines
 }
@@ -619,8 +650,20 @@ func (m *SearchModel) renderMetadata(width int) []string {
 
 	lines = append(lines, "")
 	lines = append(lines, style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render("Synopsis:"))
+	synopsis := meta.Synopsis
+	if width < 60 {
+		maxLines := m.height / 2
+		charWidth := width - paddingStyle.GetHorizontalFrameSize()
+		if charWidth < 1 {
+			charWidth = 1
+		}
+		maxChars := maxLines * charWidth
+		if maxChars > 0 && len(synopsis) > maxChars {
+			synopsis = synopsis[:maxChars] + "..."
+		}
+	}
 	synopsisStyle := style.New().Foreground(lipgloss.Color("#f4f4f6")).Width(width - paddingStyle.GetHorizontalFrameSize())
-	lines = append(lines, synopsisStyle.Render(meta.Synopsis))
+	lines = append(lines, synopsisStyle.Render(synopsis))
 
 	return lines
 }
@@ -1112,14 +1155,28 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
 		}
 
-		return nil
+		return PlayStreamMsg{}
 	}
 }
 
 func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *source.Stream {
-	p := player.Mpv
+	d := &player.Detector{}
+	p := d.Preferred()
 	opts := player.Options{
 		Title: fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
+	}
+
+	// On Android, filter out m3u8 and youtube streams — mpv-android can't play them reliably
+	if player.IsAndroid() {
+		var filtered []*source.Stream
+		for _, s := range streams {
+			if !strings.Contains(s.URL, ".m3u8") && !strings.Contains(s.URL, "youtube") {
+				filtered = append(filtered, s)
+			}
+		}
+		if len(filtered) > 0 {
+			streams = filtered
+		}
 	}
 
 	for _, s := range streams {
@@ -1227,6 +1284,8 @@ type EpisodesLoadedMsg struct {
 type TUIErrorMsg struct {
 	Err error
 }
+
+type PlayStreamMsg struct{}
 
 type SearchErrorMsg struct {
 	Err error

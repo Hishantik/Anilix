@@ -60,6 +60,7 @@ type EpisodeState struct {
 	Err               error
 	EpisodeMetadata   *EpisodeMetadataPanel
 	MetadataLoading   bool
+	Playing           bool
 }
 
 // EpisodeMetadataPanel holds metadata for a single episode
@@ -72,6 +73,17 @@ type EpisodeMetadataPanel struct {
 	Recap         bool
 	Synopsis      string
 	Duration      int
+}
+
+// EpisodeMetadataFetchTriggered is sent when metadata fetch is triggered
+type EpisodeMetadataFetchTriggered struct {
+	Index int
+}
+
+// EpisodeMetadataLoadedMsg is sent when episode metadata is loaded
+type EpisodeMetadataLoadedMsg struct {
+	Metadata *EpisodeMetadataPanel
+	Index    int
 }
 
 // NewSearchState creates a new search state

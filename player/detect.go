@@ -1,13 +1,29 @@
 package player
 
 import (
+	"os"
 	"os/exec"
 	"runtime"
 )
 
 type Detector struct{}
 
+// IsAndroid returns true if running on an Android environment.
+func IsAndroid() bool {
+	if _, err := os.Stat("/system/build.prop"); err == nil {
+		return true
+	}
+	return os.Getenv("ANDROID_DATA") != ""
+}
+
 func (d *Detector) Detect() []string {
+	if IsAndroid() {
+		if isMpvAndroidInstalled() {
+			return []string{"mpv-android"}
+		}
+		return nil
+	}
+
 	players := []string{"mpv", "vlc"}
 	if runtime.GOOS == "darwin" {
 		players = append(players, "iina")
@@ -24,6 +40,13 @@ func (d *Detector) Detect() []string {
 }
 
 func (d *Detector) Preferred() *Player {
+	if IsAndroid() {
+		if isMpvAndroidInstalled() {
+			return MpvAndroid
+		}
+		return MpvAndroid // fallback, will fail on Launch
+	}
+
 	order := []string{"mpv", "vlc"}
 	if runtime.GOOS == "darwin" {
 		order = []string{"mpv", "vlc", "iina"}
@@ -41,4 +64,13 @@ func (d *Detector) Preferred() *Player {
 func IsAvailable(name string) bool {
 	cmd := exec.Command(name, "--version")
 	return cmd.Run() == nil
+}
+
+func isMpvAndroidInstalled() bool {
+	cmd := exec.Command("pm", "list", "packages", "is.xyz.mpv")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(out) > 0
 }
