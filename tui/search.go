@@ -184,12 +184,15 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.searchState.Loading = true
 					m.progressPercent = 0
 					m.progressStart = time.Now()
+					m.textInput.Blur()
 					cmds = append(cmds, m.doSearch(query))
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
+					return m, tea.Batch(cmds...)
 				}
-			case key.Matches(msg, m.keymap.Up), key.Matches(msg, m.keymap.Down):
+				return m, nil
+			case msg.String() == "up", msg.String() == "down":
 				m.textInput.Blur()
 				// pass through to list handling below
 			default:
@@ -212,11 +215,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, m.keymap.Search):
-			if m.state == searchState {
-				m.textInput.Focus()
-				m.textInput.SetValue("")
-				return m, nil
+			if m.state == episodesState {
+				m.state = searchState
+				m.episodeState = NewEpisodeState()
 			}
+			m.textInput.Focus()
+			m.textInput.SetValue("")
+			return m, nil
 
 		case key.Matches(msg, m.keymap.Toggle):
 			if m.searchState.TranslationType == "sub" {
@@ -733,6 +738,16 @@ func (m *SearchModel) doSearch(query string) tea.Cmd {
 			anime := m.allanimeClient.MapToAnime(&show)
 			results = append(results, anime)
 		}
+
+		// Sort by relevance: exact match > prefix match > contains match
+		queryLower := strings.ToLower(query)
+		sort.SliceStable(results, func(i, j int) bool {
+			nameI := strings.ToLower(results[i].Name)
+			nameJ := strings.ToLower(results[j].Name)
+			scoreI := matchScore(nameI, queryLower)
+			scoreJ := matchScore(nameJ, queryLower)
+			return scoreI > scoreJ
+		})
 
 		return SearchResultsMsg{Results: results}
 	}
@@ -1270,6 +1285,33 @@ func stripHTML(s string) string {
 	s = strings.ReplaceAll(s, "<br/>", "\n")
 	s = strings.ReplaceAll(s, "<br />", "\n")
 	return htmlTagRe.ReplaceAllString(s, "")
+}
+
+func matchScore(name, query string) int {
+	if name == query {
+		return 4 // exact match
+	}
+	if strings.HasPrefix(name, query) {
+		return 3 // prefix match
+	}
+	if strings.Contains(name, query) {
+		return 2 // contains match
+	}
+	// Check if all query words appear in name
+	queryWords := strings.Fields(query)
+	if len(queryWords) > 1 {
+		allMatch := true
+		for _, w := range queryWords {
+			if !strings.Contains(name, w) {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return 1
+		}
+	}
+	return 0
 }
 
 type MetadataFetchTriggered struct {

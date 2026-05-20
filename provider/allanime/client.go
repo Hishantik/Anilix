@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,11 @@ func (c *AllanimeClient) GetShowEpisodes(ctx context.Context, showID string, tra
 		for i, v := range sub {
 			list[i] = fmt.Sprintf("%v", v)
 		}
+		sort.Slice(list, func(i, j int) bool {
+			a, _ := strconv.ParseFloat(list[i], 64)
+			b, _ := strconv.ParseFloat(list[j], 64)
+			return a < b
+		})
 		episodes["sub"] = list
 	}
 	if dub, ok := detail["dub"].([]interface{}); ok {
@@ -105,6 +111,11 @@ func (c *AllanimeClient) GetShowEpisodes(ctx context.Context, showID string, tra
 		for i, v := range dub {
 			list[i] = fmt.Sprintf("%v", v)
 		}
+		sort.Slice(list, func(i, j int) bool {
+			a, _ := strconv.ParseFloat(list[i], 64)
+			b, _ := strconv.ParseFloat(list[j], 64)
+			return a < b
+		})
 		episodes["dub"] = list
 	}
 
