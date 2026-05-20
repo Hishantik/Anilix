@@ -70,6 +70,9 @@ type SearchModel struct {
 	anilistClient    *anilist.Client
 	allanimeProvider *allanime.AllanimeProvider
 
+	prevState     tuiState
+	confirmSelect int // 0 = yes, 1 = no
+
 	selectedResult *SelectionResult
 	lastQuery      string
 
@@ -172,7 +175,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == searchState && m.textInput.Focused() {
 			switch {
 			case key.Matches(msg, m.keymap.Quit):
-				return m, tea.Quit
+				m.prevState = m.state
+				m.state = confirmQuitState
+				return m, nil
 			case key.Matches(msg, m.keymap.Back):
 				m.textInput.Blur()
 				return m, nil
@@ -203,9 +208,34 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Handle confirmQuitState keys first
+		if m.state == confirmQuitState {
+			switch msg.String() {
+			case "left", "h":
+				m.confirmSelect = 0
+			case "right", "l":
+				m.confirmSelect = 1
+			case "enter":
+				if m.confirmSelect == 0 {
+					return m, tea.Quit
+				}
+				m.state = m.prevState
+				return m, nil
+			case "y":
+				return m, tea.Quit
+			case "n", "esc":
+				m.state = m.prevState
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, m.keymap.Quit):
-			return m, tea.Quit
+			m.prevState = m.state
+			m.confirmSelect = 1 // default to "No"
+			m.state = confirmQuitState
+			return m, nil
 
 		case key.Matches(msg, m.keymap.Back):
 			if m.state == episodesState {
@@ -473,6 +503,8 @@ func (m *SearchModel) View() string {
 		content = m.viewSearchState()
 	case episodesState:
 		content = m.viewEpisodesState()
+	case confirmQuitState:
+		content = m.viewConfirmQuit()
 	}
 
 	return m.renderContent(content)
@@ -494,6 +526,56 @@ func (m *SearchModel) viewEpisodesState() string {
 	rightPanel := m.renderEpisodeRightPanel(panelWidth)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+}
+
+func (m *SearchModel) viewConfirmQuit() string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#f4f4f6")).
+		Align(lipgloss.Center)
+
+	promptStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#f4f4f6")).
+		Align(lipgloss.Center).
+		MarginTop(1)
+
+	selectedBg := lipgloss.Color("#9d4edd")
+	dimBg := lipgloss.Color("#555555")
+
+	btnYesStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#f4f4f6")).
+		Background(selectedBg).
+		Padding(0, 2).
+		MarginRight(1)
+
+	btnNoStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#f4f4f6")).
+		Background(selectedBg).
+		Padding(0, 2).
+		MarginLeft(1)
+
+	if m.confirmSelect == 0 {
+		btnNoStyle = btnNoStyle.Background(dimBg)
+	} else {
+		btnYesStyle = btnYesStyle.Background(dimBg)
+	}
+
+	boxWidth := 40
+	title := titleStyle.Width(boxWidth).Render("Quit Anilix?")
+	prompt := promptStyle.Width(boxWidth).Render("Are you sure you want to quit?")
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center, btnYesStyle.Render("Yes"), btnNoStyle.Render("No"))
+
+	popup := lipgloss.JoinVertical(lipgloss.Center, title, prompt, buttons)
+
+	popupBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#9d4edd")).
+		Padding(1, 3).
+		Render(popup)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popupBox)
 }
 
 func (m *SearchModel) renderLeftPanel(width int) string {
@@ -681,7 +763,15 @@ func (m *SearchModel) renderContent(content string) string {
 	}
 
 	h := strings.Count(content, "\n") + 1
-	helpView := m.help.View(m.keymap)
+
+	var helpView string
+	if m.state == confirmQuitState {
+		confirmHelp := confirmKeymap{m.keymap.ConfirmYes, m.keymap.ConfirmNo}
+		helpView = m.help.View(confirmHelp)
+	} else {
+		helpView = m.help.View(m.keymap)
+	}
+
 	remaining := m.height - h - 2
 	if remaining < 0 {
 		remaining = 0

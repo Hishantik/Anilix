@@ -3,13 +3,15 @@ package tui
 import "github.com/charmbracelet/bubbles/key"
 
 type keymap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Select   key.Binding
-	Back     key.Binding
-	Quit     key.Binding
-	Toggle   key.Binding
-	Search   key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	Select     key.Binding
+	Back       key.Binding
+	Quit       key.Binding
+	Toggle     key.Binding
+	Search     key.Binding
+	ConfirmYes key.Binding
+	ConfirmNo  key.Binding
 }
 
 func newKeymap() keymap {
@@ -42,6 +44,14 @@ func newKeymap() keymap {
 			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
 		),
+		ConfirmYes: key.NewBinding(
+			key.WithKeys("y", "enter"),
+			key.WithHelp("y/enter", "yes"),
+		),
+		ConfirmNo: key.NewBinding(
+			key.WithKeys("n", "esc"),
+			key.WithHelp("n/esc", "no"),
+		),
 	}
 }
 
@@ -54,4 +64,17 @@ func (k keymap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Select},
 		{k.Back, k.Quit, k.Toggle},
 	}
+}
+
+type confirmKeymap struct {
+	Yes key.Binding
+	No  key.Binding
+}
+
+func (k confirmKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Yes, k.No}
+}
+
+func (k confirmKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Yes, k.No}}
 }

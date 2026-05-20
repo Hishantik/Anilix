@@ -12,6 +12,7 @@ type tuiState int
 const (
 	searchState tuiState = iota
 	episodesState
+	confirmQuitState
 )
 
 // SelectionResult holds the selected anime and episode

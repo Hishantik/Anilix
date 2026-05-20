@@ -44,7 +44,6 @@ func runTUI(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	if result == nil || result.Anime == nil {
-		fmt.Println("No anime selected")
 		os.Exit(0)
 	}
 	fmt.Printf("Selected: %s (MAL ID: %d, Episode: %s)\n", result.Anime.Name, result.Anime.MALID, result.Episode)
