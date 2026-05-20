@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 type JikanProvider struct {

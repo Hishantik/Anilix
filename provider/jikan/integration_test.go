@@ -3,7 +3,7 @@ package jikan
 import (
 	"testing"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 func TestIntegration_JikanSearch(t *testing.T) {

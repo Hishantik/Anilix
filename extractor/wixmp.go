@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anilix/anilix/curl"
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/curl"
+	"github.com/hishantik/anilix/source"
 )
 
 const wixmpReferer = "https://wixmp.com/"

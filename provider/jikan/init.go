@@ -1,6 +1,6 @@
 package jikan
 
-import "github.com/anilix/anilix/provider"
+import "github.com/hishantik/anilix/provider"
 
 func init() {
 	provider.Register(&provider.Provider{

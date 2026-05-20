@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anilix/anilix/curl"
-	"github.com/anilix/anilix/extractor"
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/curl"
+	"github.com/hishantik/anilix/extractor"
+	"github.com/hishantik/anilix/source"
 )
 
 // fixedProvider defines ani-cli's 5 fixed providers with their markers

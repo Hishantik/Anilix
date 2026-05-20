@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	allanime "github.com/anilix/anilix/provider/allanime"
-	"github.com/anilix/anilix/provider/anilist"
-	"github.com/anilix/anilix/provider/jikan"
-	"github.com/anilix/anilix/source"
-	"github.com/anilix/anilix/player"
-	"github.com/anilix/anilix/tui/style"
+	allanime "github.com/hishantik/anilix/provider/allanime"
+	"github.com/hishantik/anilix/provider/anilist"
+	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/source"
+	"github.com/hishantik/anilix/player"
+	"github.com/hishantik/anilix/tui/style"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"

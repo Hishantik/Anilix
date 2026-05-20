@@ -3,7 +3,7 @@ package tui
 import (
 	"time"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 // TUI state machine states

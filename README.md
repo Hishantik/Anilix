@@ -21,13 +21,13 @@ A terminal-based anime streaming client written in Go. Search anime, browse epis
 ## Installation
 
 ```bash
-go install github.com/anilix/anilix@latest
+go install github.com/hishantik/anilix@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/anilix/anilix.git
+git clone https://github.com/hishantik/anilix.git
 cd anilix
 go build -o anilix .
 ```

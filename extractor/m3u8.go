@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/anilix/anilix/curl"
+	"github.com/hishantik/anilix/curl"
 )
 
 // M3U8Variant represents a quality variant in an m3u8 playlist

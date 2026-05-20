@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 func TestIntegration_FullStreamExtraction(t *testing.T) {

@@ -3,7 +3,7 @@ package anilist
 import (
 	"context"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 type AniListProvider struct {

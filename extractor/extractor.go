@@ -3,7 +3,7 @@ package extractor
 import (
 	"context"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 // Extractor is the interface for resolving playable stream URLs from embed/hosting pages.

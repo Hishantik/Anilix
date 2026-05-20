@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/anilix/anilix/curl"
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/curl"
+	"github.com/hishantik/anilix/source"
 )
 
 const mp4uploadReferer = "https://mp4upload.com/"

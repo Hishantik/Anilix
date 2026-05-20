@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/anilix/anilix/config"
-	"github.com/anilix/anilix/tui"
+	"github.com/hishantik/anilix/config"
+	"github.com/hishantik/anilix/tui"
 	"github.com/spf13/cobra"
 )
 

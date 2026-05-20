@@ -3,7 +3,7 @@ package jikan
 import (
 	"testing"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 var _ source.Source = (*JikanProvider)(nil)

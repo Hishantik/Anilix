@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anilix/anilix/curl"
+	"github.com/hishantik/anilix/curl"
 )
 
 const (

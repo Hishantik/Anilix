@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	allanime "github.com/anilix/anilix/provider/allanime"
-	"github.com/anilix/anilix/source"
+	allanime "github.com/hishantik/anilix/provider/allanime"
+	"github.com/hishantik/anilix/source"
 )
 
 type mockSource struct {

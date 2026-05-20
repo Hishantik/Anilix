@@ -1,4 +1,4 @@
-module github.com/anilix/anilix
+module github.com/hishantik/anilix
 
 go 1.25
 

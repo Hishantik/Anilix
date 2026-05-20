@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anilix/anilix/source"
+	"github.com/hishantik/anilix/source"
 )
 
 const (

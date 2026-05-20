@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/anilix/anilix/provider"
+	"github.com/hishantik/anilix/provider"
 	"github.com/spf13/cobra"
 )
 

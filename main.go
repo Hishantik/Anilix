@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/anilix/anilix/cmd"
+	"github.com/hishantik/anilix/cmd"
 )
 
 func main() {
