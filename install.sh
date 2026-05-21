@@ -12,24 +12,73 @@ API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
 # --- Colors (disabled if not a terminal) ---
 if [ -t 1 ]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    BLUE='\033[0;34m'
-    BOLD='\033[1m'
-    RESET='\033[0m'
+    ESC=$(printf '\033')
+    RED="${ESC}[0;31m"
+    GREEN="${ESC}[0;32m"
+    YELLOW="${ESC}[0;33m"
+    BLUE="${ESC}[0;34m"
+    BOLD="${ESC}[1m"
+    RESET="${ESC}[0m"
 else
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' RESET=''
 fi
 
 # --- Helpers ---
-info()  { printf "${BLUE}[info]${RESET} %s\n" "$*"; }
-ok()    { printf "${GREEN}[ok]${RESET} %s\n" "$*"; }
-warn()  { printf "${YELLOW}[warn]${RESET} %s\n" "$*"; }
-die()   { printf "${RED}[error]${RESET} %s\n" "$*" >&2; exit 1; }
+info()  { printf "%s[info]%s %s\n" "$BLUE" "$RESET" "$*"; }
+ok()    { printf "%s[ok]%s %s\n" "$GREEN" "$RESET" "$*"; }
+warn()  { printf "%s[warn]%s %s\n" "$YELLOW" "$RESET" "$*"; }
+die()   { printf "%s[error]%s %s\n" "$RED" "$RESET" "$*" >&2; exit 1; }
 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Required command '$1' not found. Please install it first."
+}
+
+# --- Download with progress bar ---
+draw_bar() {
+    pct="$1"
+    [ "$pct" -gt 100 ] && pct=100
+    width=50
+    on=$(( pct * width / 100 ))
+    off=$(( width - on ))
+    filled=$(printf "%*s" "$on" "")
+    filled=${filled// /■}
+    empty=$(printf "%*s" "$off" "")
+    empty=${empty// /･}
+    printf "\r\033[38;2;157;78;221m%s%s %3d%%\033[0m" "$filled" "$empty" "$pct" >&2
+}
+
+download_file() {
+    url="$1"
+    output="$2"
+
+    # Start download in background
+    curl -fSL "$url" -o "$output" -# 2>/dev/null &
+    curl_pid=$!
+
+    # Animate progress bar while downloading
+    pct=0
+    while kill -0 "$curl_pid" 2>/dev/null; do
+        draw_bar "$pct"
+        # Ramp up slowly: +1 per tick early on, accelerating
+        if [ "$pct" -lt 30 ]; then
+            pct=$((pct + 1))
+        elif [ "$pct" -lt 60 ]; then
+            pct=$((pct + 2))
+        elif [ "$pct" -lt 85 ]; then
+            pct=$((pct + 1))
+        else
+            # Slow crawl near end — wait for curl to finish
+            pct=$((pct + 1))
+        fi
+        sleep 0.15
+    done
+
+    # Download finished — complete the bar
+    draw_bar 100
+    printf "\n" >&2
+
+    wait "$curl_pid"
+    return $?
 }
 
 # --- Cleanup trap ---
@@ -146,8 +195,7 @@ do_install() {
     TMPDIR=$(mktemp -d)
 
     info "Downloading ${url}..."
-    if ! curl -fSL "$url" -o "${TMPDIR}/${archive_name}"; then
-        # Try the release asset with slightly different naming (e.g. .tar.gz vs .zip)
+    if ! download_file "$url" "${TMPDIR}/${archive_name}"; then
         die "Download failed. Check if version ${version} exists: https://github.com/${REPO}/releases"
     fi
 
