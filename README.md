@@ -16,6 +16,7 @@ A terminal-based anime streaming client written in Go. Search anime, browse epis
 |----------|-------------------|
 | Linux | mpv, vlc |
 | macOS | mpv, vlc, iina |
+| Windows | mpv, vlc |
 | Android | mpv-android, vlc-android |
 
 ## Installation
@@ -26,7 +27,13 @@ A terminal-based anime streaming client written in Go. Search anime, browse epis
 curl -fsSL https://raw.githubusercontent.com/hishantik/anilix/main/install.sh | sh
 ```
 
-This automatically detects your platform (Linux, macOS, Windows, Termux) and installs the latest release binary.
+This automatically detects your platform (Linux, macOS, Termux) and installs the latest release binary.
+
+**Windows (PowerShell):**
+
+```powershell
+curl -fsSL https://raw.githubusercontent.com/hishantik/anilix/main/install.bat -o install.bat && .\install.bat
+```
 
 ### Go Install
 
