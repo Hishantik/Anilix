@@ -1,6 +1,7 @@
 # Build output
 anilix
 *.sh
+!install.sh
 *.exe
 
 # IDE
