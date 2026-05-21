@@ -13,6 +13,7 @@ const (
 	searchState tuiState = iota
 	episodesState
 	confirmQuitState
+	settingsState
 )
 
 // SelectionResult holds the selected anime and episode
@@ -74,6 +75,13 @@ type EpisodeMetadataPanel struct {
 	Recap         bool
 	Synopsis      string
 	Duration      int
+}
+
+// SettingsState holds the state for the settings popup
+type SettingsState struct {
+	Quality        string // "1080p", "720p", "480p", "360p", "auto"
+	AniskipEnabled bool
+	Cursor         int // 0 = quality, 1 = aniskip
 }
 
 // EpisodeMetadataFetchTriggered is sent when metadata fetch is triggered

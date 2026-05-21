@@ -182,14 +182,15 @@ func ensureSkipScript() string {
 	return path
 }
 
-// formatSkipOpts encodes skip intervals into mpv script-opts format:
-// "op:87.5-118.2,ed:1340.0-1370.5"
+// formatSkipOpts encodes skip intervals into mpv script-opts format.
+// Uses # as interval separator (mpv treats : and , as delimiters).
+// Result: "op=87.5-118.2#ed=1340.0-1370.5"
 func formatSkipOpts(intervals []SkipInterval) string {
 	var parts []string
 	for _, iv := range intervals {
-		parts = append(parts, fmt.Sprintf("%s:%.1f-%.1f", iv.Type, iv.Start, iv.End))
+		parts = append(parts, fmt.Sprintf("%s=%.1f-%.1f", iv.Type, iv.Start, iv.End))
 	}
-	return strings.Join(parts, ",")
+	return strings.Join(parts, "#")
 }
 
 func (p *Player) vlcArgs(url string, opts Options) []string {
@@ -219,6 +220,12 @@ func (p *Player) iinaArgs(url string, opts Options) []string {
 }
 
 func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
+	// Install skip script and write config for AniSkip support
+	if len(opts.SkipTimes) > 0 {
+		ensureAndroidSkipScript()
+		writeAndroidSkipConfig(opts.SkipTimes)
+	}
+
 	// Termux am wrapper supports -a, -d, -t, --es, --user but NOT -n.
 	// Use -a with component specified via -d intent data or package manager.
 	// We try -n first (works on real am), fallback handled in Launch().
@@ -234,6 +241,30 @@ func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
 		args = append(args, "--es", "title", opts.Title)
 	}
 	return args
+}
+
+// ensureAndroidSkipScript installs the persistent Lua skip script to
+// mpv-android's scripts directory so it auto-loads on every start.
+func ensureAndroidSkipScript() {
+	dir := "/data/data/is.xyz.mpv/files/scripts"
+	_ = os.MkdirAll(dir, 0755)
+
+	path := filepath.Join(dir, "anilix-skip.lua")
+	if _, err := os.Stat(path); err == nil {
+		return // already installed
+	}
+	_ = os.WriteFile(path, []byte(aniSkipLuaScript), 0644)
+}
+
+// writeAndroidSkipConfig writes skip times to a config file that the
+// persistent Lua script reads on each file-loaded event.
+func writeAndroidSkipConfig(skipTimes []SkipInterval) {
+	dir := "/data/data/is.xyz.mpv/files"
+	_ = os.MkdirAll(dir, 0755)
+
+	path := filepath.Join(dir, "anilix-skip.conf")
+	content := formatSkipOpts(skipTimes)
+	_ = os.WriteFile(path, []byte(content), 0644)
 }
 
 func (p *Player) vlcAndroidArgs(url string, opts Options) []string {

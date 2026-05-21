@@ -75,6 +75,8 @@ type SearchModel struct {
 	prevState     tuiState
 	confirmSelect int // 0 = yes, 1 = no
 
+	settingsState *SettingsState
+
 	selectedResult *SelectionResult
 	lastQuery      string
 
@@ -130,6 +132,10 @@ func NewSearchModel() *SearchModel {
 		state:            searchState,
 		searchState:      NewSearchState(),
 		episodeState:     NewEpisodeState(),
+		settingsState: &SettingsState{
+			Quality:        config.GetString("quality"),
+			AniskipEnabled: config.GetBool("aniskip.enabled"),
+		},
 		textInput:        ti,
 		help:             help,
 		keymap:           km,
@@ -209,12 +215,57 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.searchState.TranslationType = "sub"
 				}
 				return m, nil
+			case key.Matches(msg, m.keymap.Settings):
+				m.prevState = m.state
+				m.state = settingsState
+				return m, nil
 			default:
 				var cmd tea.Cmd
 				m.textInput, cmd = m.textInput.Update(msg)
 				cmds = append(cmds, cmd)
 				return m, tea.Batch(cmds...)
 			}
+		}
+
+		// Handle settingsState keys
+		if m.state == settingsState {
+			switch msg.String() {
+			case "up", "k":
+				if m.settingsState.Cursor > 0 {
+					m.settingsState.Cursor--
+				}
+			case "down", "j":
+				if m.settingsState.Cursor < 1 {
+					m.settingsState.Cursor++
+				}
+			case "left", "h", "right", "l":
+				if m.settingsState.Cursor == 0 {
+					// Quality cycle
+					qualities := []string{"1080p", "720p", "480p", "360p", "auto"}
+					idx := 0
+					for i, q := range qualities {
+						if q == m.settingsState.Quality {
+							idx = i
+							break
+						}
+					}
+					if msg.String() == "left" || msg.String() == "h" {
+						idx = (idx - 1 + len(qualities)) % len(qualities)
+					} else {
+						idx = (idx + 1) % len(qualities)
+					}
+					m.settingsState.Quality = qualities[idx]
+					config.Set("quality", m.settingsState.Quality)
+				} else {
+					// AniSkip toggle
+					m.settingsState.AniskipEnabled = !m.settingsState.AniskipEnabled
+					config.Set("aniskip.enabled", m.settingsState.AniskipEnabled)
+				}
+			case "esc":
+				m.state = m.prevState
+				return m, nil
+			}
+			return m, nil
 		}
 
 		// Handle confirmQuitState keys first
@@ -289,6 +340,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return progressTickMsg{}
 				}))
 			}
+
+		case key.Matches(msg, m.keymap.Settings):
+			m.prevState = m.state
+			m.state = settingsState
+			return m, nil
 
 		case key.Matches(msg, m.keymap.Select):
 			if m.state == searchState {
@@ -497,7 +553,7 @@ func (m *SearchModel) resize(width, height int) {
 	m.episodeList.SetSize(m.listWidth, listHeight)
 	m.textInput.Width = styledWidth / 2
 	m.help.Width = styledWidth
-	m.progress.Width = styledWidth
+	m.progress.Width = m.listWidth
 }
 
 func (m *SearchModel) View() string {
@@ -514,6 +570,8 @@ func (m *SearchModel) View() string {
 		content = m.viewEpisodesState()
 	case confirmQuitState:
 		content = m.viewConfirmQuit()
+	case settingsState:
+		content = m.viewSettings()
 	}
 
 	return m.renderContent(content)
@@ -589,11 +647,73 @@ func (m *SearchModel) viewConfirmQuit() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popupBox)
 }
 
+func (m *SearchModel) viewSettings() string {
+	selectedBg := lipgloss.Color("#9d4edd")
+	dimBg := lipgloss.Color("#555555")
+	fg := lipgloss.Color("#f4f4f6")
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(fg).Align(lipgloss.Center)
+
+	labelStyle := lipgloss.NewStyle().Foreground(fg).Width(14)
+
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).Foreground(fg).Background(selectedBg).Padding(0, 1)
+
+	unselectedStyle := lipgloss.NewStyle().
+		Foreground(fg).Background(dimBg).Padding(0, 1)
+
+	qualityVal := m.settingsState.Quality
+	aniskipVal := "OFF"
+	if m.settingsState.AniskipEnabled {
+		aniskipVal = "ON"
+	}
+
+	// Quality row
+	qualityStyle := unselectedStyle
+	if m.settingsState.Cursor == 0 {
+		qualityStyle = selectedStyle
+	}
+	qualityRow := lipgloss.JoinHorizontal(lipgloss.Center,
+		labelStyle.Render("Quality:"),
+		qualityStyle.Render(qualityVal),
+	)
+
+	// AniSkip row
+	aniskipStyle := unselectedStyle
+	if m.settingsState.Cursor == 1 {
+		aniskipStyle = selectedStyle
+	}
+	aniskipRow := lipgloss.JoinHorizontal(lipgloss.Center,
+		labelStyle.Render("AniSkip:"),
+		aniskipStyle.Render(aniskipVal),
+	)
+
+	boxWidth := 40
+	title := titleStyle.Width(boxWidth).Render("Settings")
+
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		qualityRow,
+		lipgloss.NewStyle().MarginTop(1).Render(aniskipRow),
+	)
+
+	popup := lipgloss.JoinVertical(lipgloss.Center, title, lipgloss.NewStyle().MarginTop(1).Render(content))
+
+	popupBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#9d4edd")).
+		Padding(1, 3).
+		Render(popup)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popupBox)
+}
+
 func (m *SearchModel) renderLeftPanel(width int) string {
 	var lines []string
 
 	switchText := renderTextSwitch(m.searchState.TranslationType)
-	lines = append(lines, subDubPaddingStyle.Render(switchText))
+	qualityText := style.Faint(" | ") + style.SubTitle(m.settingsState.Quality)
+	headerLine := subDubPaddingStyle.Render(switchText + qualityText)
+	lines = append(lines, lipgloss.NewStyle().MaxWidth(width).Render(headerLine))
 	lines = append(lines, "")
 	lines = append(lines, m.textInput.View())
 	lines = append(lines, "")
@@ -609,21 +729,32 @@ func (m *SearchModel) renderLeftPanel(width int) string {
 
 func (m *SearchModel) renderRightPanel(width int) string {
 	if m.searchState.MetadataLoading {
-		return paddingStyle.Render(lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading metadata..."))
+		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading metadata...")
+		return lipgloss.NewStyle().Width(m.listWidth).AlignHorizontal(lipgloss.Center).Padding(1, 2).Render(msg)
 	}
 
 	if m.searchState.Metadata == nil {
-		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Render("Select an anime"))
+		return ""
 	}
 
-	return paddingStyle.Render(strings.Join(m.renderMetadata(width), "\n"))
+	lines := m.renderMetadata(width)
+	maxLines := m.height - 6
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return paddingStyle.Render(strings.Join(lines, "\n"))
 }
 
 func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
 	var lines []string
 
 	switchText := renderTextSwitch(m.searchState.TranslationType)
-	lines = append(lines, subDubPaddingStyle.Render(switchText))
+	qualityText := style.Faint(" | ") + style.SubTitle(m.settingsState.Quality)
+	headerLine := subDubPaddingStyle.Render(switchText + qualityText)
+	lines = append(lines, lipgloss.NewStyle().MaxWidth(width).Render(headerLine))
 	lines = append(lines, "")
 	lines = append(lines, "")
 	lines = append(lines, m.episodeList.View())
@@ -643,7 +774,8 @@ func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
 
 func (m *SearchModel) renderEpisodeRightPanel(width int) string {
 	if m.episodeState.MetadataLoading {
-		return paddingStyle.Render(lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading episode info..."))
+		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading episode info...")
+		return lipgloss.NewStyle().Width(m.listWidth).AlignHorizontal(lipgloss.Center).Padding(1, 2).Render(msg)
 	}
 
 	if len(m.episodeState.Episodes) == 0 {
@@ -667,7 +799,15 @@ func (m *SearchModel) renderEpisodeRightPanel(width int) string {
 		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(fmt.Sprintf("Episode %s", selectedEp)))
 	}
 
-	return paddingStyle.Render(strings.Join(m.renderEpisodeMetadata(width), "\n"))
+	lines := m.renderEpisodeMetadata(width)
+	maxLines := m.height - 6
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return paddingStyle.Render(strings.Join(lines, "\n"))
 }
 
 func (m *SearchModel) renderEpisodeMetadata(width int) []string {
@@ -779,6 +919,15 @@ func (m *SearchModel) renderContent(content string) string {
 	if m.state == confirmQuitState {
 		confirmHelp := confirmKeymap{m.keymap.ConfirmYes, m.keymap.ConfirmNo}
 		helpView = m.help.View(confirmHelp)
+	} else if m.state == settingsState {
+		sHelp := settingsKeymap{
+			Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+			Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+			Left:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "decrease")),
+			Right: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "increase")),
+			Close: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+		}
+		helpView = m.help.View(sHelp)
 	} else {
 		helpView = m.help.View(m.keymap)
 	}
@@ -1270,14 +1419,15 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 
 		// Fetch AniSkip skip times if enabled and MAL ID is available
 		var skipTimes []aniskip.SkipInterval
-		if config.GetBool("aniskip.enabled") && malID > 0 {
+		if m.settingsState.AniskipEnabled && malID > 0 {
 			epNum, _ := strconv.Atoi(episodeNum)
 			if times, err := aniskip.GetSkipTimes(malID, epNum); err == nil {
 				skipTimes = times
 			}
 		}
 
-		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes)
+		quality := m.settingsState.Quality
+		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality)
 		if playStream == nil {
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
 		}
@@ -1286,12 +1436,64 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 	}
 }
 
-func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skipTimes []aniskip.SkipInterval) *source.Stream {
+func filterByQuality(streams []*source.Stream, quality string) []*source.Stream {
+	if quality == "" || quality == "auto" {
+		return streams
+	}
+
+	target := parseQualityNum(quality)
+
+	// Exact match
+	var exact []*source.Stream
+	for _, s := range streams {
+		if s.Quality == quality {
+			exact = append(exact, s)
+		}
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+
+	// Closest match (prefer lower)
+	var closest []*source.Stream
+	bestDiff := int(^uint(0) >> 1) // max int
+	for _, s := range streams {
+		q := parseQualityNum(s.Quality)
+		diff := q - target
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < bestDiff {
+			bestDiff = diff
+			closest = []*source.Stream{s}
+		} else if diff == bestDiff {
+			closest = append(closest, s)
+		}
+	}
+	return closest
+}
+
+func parseQualityNum(q string) int {
+	q = strings.TrimSuffix(q, "p")
+	n, _ := strconv.Atoi(q)
+	if n == 0 {
+		return 9999 // "auto" or unknown = highest
+	}
+	return n
+}
+
+func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skipTimes []aniskip.SkipInterval, quality string) *source.Stream {
 	d := &player.Detector{}
 
+	// Filter by quality if not "auto"
+	filtered := filterByQuality(streams, quality)
+	if len(filtered) == 0 {
+		filtered = streams
+	}
+
 	// On Android, sort streams: no-referrer first (more likely to work)
-	ordered := make([]*source.Stream, len(streams))
-	copy(ordered, streams)
+	ordered := make([]*source.Stream, len(filtered))
+	copy(ordered, filtered)
 	if player.IsAndroid() {
 		sort.SliceStable(ordered, func(i, j int) bool {
 			return !ordered[i].NeedsReferrer && ordered[j].NeedsReferrer

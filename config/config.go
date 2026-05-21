@@ -46,7 +46,7 @@ func setEnvs() {
 
 func setDefaults() {
 	v.SetDefault("player", "mpv")
-	v.SetDefault("quality", "1080p")
+	v.SetDefault("quality", "480p")
 	v.SetDefault("source", "")
 	v.SetDefault("history.enabled", true)
 	v.SetDefault("aniskip.enabled", true)
@@ -78,6 +78,19 @@ func GetBool(key string) bool {
 
 func Set(key string, value interface{}) {
 	v.Set(key, value)
+	Save()
+}
+
+// Save persists the current config to disk.
+func Save() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(home, "."+AppName)
+	_ = os.MkdirAll(dir, 0755)
+	path := filepath.Join(dir, AppName+".toml")
+	_ = v.WriteConfigAs(path)
 }
 
 // HistoryPath returns the path to the history file
