@@ -143,6 +143,18 @@ func TestMpvAndroidArgs(t *testing.T) {
 				t.Errorf("first arg should be 'start', got %q", args[0])
 			}
 
+			// Verify --user 0
+			foundUser := false
+			for i, arg := range args {
+				if arg == "--user" && i+1 < len(args) && args[i+1] == "0" {
+					foundUser = true
+					break
+				}
+			}
+			if !foundUser {
+				t.Errorf("mpvAndroidArgs() missing --user 0 in args: %v", args)
+			}
+
 			// Verify action
 			foundAction := false
 			for i, arg := range args {

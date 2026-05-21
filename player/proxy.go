@@ -102,6 +102,13 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 
 		ct := resp.Header.Get("Content-Type")
 
+		// Fix generic Content-Type so mpv knows it's video
+		if ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream" {
+			if sniffed := sniffVideoType(targetURL); sniffed != "" {
+				ct = sniffed
+			}
+		}
+
 		// Playlist: read fully, rewrite URLs, cache 2s — must handle
 		// before WriteHeader because rewriting changes Content-Length.
 		if isPlaylist(ct, targetURL) && resp.StatusCode == 200 {
@@ -131,6 +138,10 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 
 		// Segments: forward headers and stream
 		for _, key := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"} {
+			if key == "Content-Type" {
+				w.Header().Set(key, ct)
+				continue
+			}
 			if v := resp.Header.Get(key); v != "" {
 				w.Header().Set(key, v)
 			}
@@ -234,4 +245,31 @@ func rewriteTagURI(tag string, resolve func(string) string) string {
 		return tag[:start] + resolve(uri) + tag[end:]
 	}
 	return tag
+}
+
+// sniffVideoType returns a video Content-Type based on the URL extension.
+func sniffVideoType(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "video/mp4"
+	}
+	path := strings.ToLower(u.Path)
+	switch {
+	case strings.HasSuffix(path, ".mp4"):
+		return "video/mp4"
+	case strings.HasSuffix(path, ".webm"):
+		return "video/webm"
+	case strings.HasSuffix(path, ".mkv"):
+		return "video/x-matroska"
+	case strings.HasSuffix(path, ".avi"):
+		return "video/x-msvideo"
+	case strings.HasSuffix(path, ".m3u8"):
+		return "application/vnd.apple.mpegurl"
+	case strings.HasSuffix(path, ".ts"):
+		return "video/mp2t"
+	case strings.HasSuffix(path, ".fmp4"):
+		return "video/mp4"
+	default:
+		return "video/mp4"
+	}
 }

@@ -20,11 +20,21 @@ A terminal-based anime streaming client written in Go. Search anime, browse epis
 
 ## Installation
 
+### Quick Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hishantik/anilix/main/install.sh | sh
+```
+
+This automatically detects your platform (Linux, macOS, Windows, Termux) and installs the latest release binary.
+
+### Go Install
+
 ```bash
 go install github.com/hishantik/anilix@latest
 ```
 
-Or build from source:
+### Build from Source
 
 ```bash
 git clone https://github.com/hishantik/anilix.git
@@ -36,6 +46,10 @@ go build -o anilix .
 > ```bash
 > mkdir -p /tmp/anilix-build && cp -r . /tmp/anilix-build/ && cd /tmp/anilix-build && go build -o ~/anilix .
 > ```
+
+### Manual Download
+
+Download the latest binary for your platform from [GitHub Releases](https://github.com/hishantik/anilix/releases).
 
 ## Usage
 

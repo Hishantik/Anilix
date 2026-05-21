@@ -1,7 +1,6 @@
 # Build output
 anilix
 *.sh
-!install.sh
 *.exe
 
 # IDE
@@ -11,3 +10,5 @@ anilix
 # OS
 .DS_Store
 
+#Debug
+*.debug
