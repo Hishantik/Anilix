@@ -40,8 +40,8 @@ draw_bar() {
     width=50
     on=$(( pct * width / 100 ))
     off=$(( width - on ))
-    filled=$(printf "%*s" "$on" "" | tr ' ' '■')
-    empty=$(printf "%*s" "$off" "" | tr ' ' '･')
+    filled=$(printf "%*s" "$on" "" | sed 's/ /■/g')
+    empty=$(printf "%*s" "$off" "" | sed 's/ /･/g')
     printf "\r\033[38;2;157;78;221m%s%s %3d%%\033[0m" "$filled" "$empty" "$pct" >&2
 }
 
