@@ -15,13 +15,13 @@ A terminal-based anime streaming application built in Go. Search, browse, and st
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      User Interface Layer                        │
-│                  (TUI / CLI / Interactive)                       │
+│                      User Interface Layer                       │
+│                  (TUI / CLI / Interactive)                       
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Source Interface (Abstraction)                │
+│                    Source Interface (Abstraction)               │
 │                                                                 │
 │   Search(query) → []*Anime                                      │
 │   SeasonsOf(anime) → []Season                                   │
@@ -40,8 +40,8 @@ A terminal-based anime streaming application built in Go. Search, browse, and st
 │     cover, year,     │                 │     stream sources       │
 │     genres, status   │                 │                          │
 └──────────────────────┘                 └───────────┬──────────────┘
-                                                    │
-                                                    ▼
+                                                     │
+                                                     ▼
                                          ┌──────────────────────────┐
                                          │   ID Resolver            │
                                          │   (Cross-Provider Link)  │
