@@ -41,11 +41,6 @@ trap cleanup EXIT
 
 # --- Detect OS ---
 detect_os() {
-    # Check for Android/Termux first
-    if is_termux; then
-        echo "android"
-        return
-    fi
     os="$(uname -s)"
     case "$os" in
         Linux*)     echo "linux" ;;
@@ -198,7 +193,7 @@ check_deps() {
     if [ "$has_player" = false ]; then
         warn "No supported video player found. Anilix requires one of: mpv, vlc, iina"
         printf "\n  Install suggestions:\n"
-        if [ "$(detect_os)" = "android" ]; then
+        if is_termux; then
             printf "    ${BOLD}pkg install mpv${RESET}\n"
         elif [ "$(detect_os)" = "darwin" ]; then
             printf "    ${BOLD}brew install mpv${RESET}      # or\n"
