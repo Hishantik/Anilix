@@ -27,9 +27,12 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 	port := listener.Addr().(*net.TCPAddr).Port
 	localURL = fmt.Sprintf("http://127.0.0.1:%d/video", port)
 
-	// Keep-alive HTTP client with connection pooling
+	// Keep-alive HTTP client with connection pooling.
+	// Use a custom DialContext that resolves DNS via direct UDP to 8.8.8.8,
+	// because Go's default resolver tries [::1]:53 which fails in Termux.
 	client := &http.Client{
 		Transport: &http.Transport{
+			DialContext: proxyDialContext,
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 5,
 			IdleConnTimeout:     5 * time.Minute,
@@ -281,4 +284,149 @@ func sniffVideoType(rawURL string) string {
 	default:
 		return "video/mp4"
 	}
+}
+
+// proxyDialContext resolves hostnames via direct UDP DNS to 8.8.8.8 (bypassing
+// Go's default resolver which fails in Termux due to [::1]:53), then dials the
+// resolved address.
+func proxyDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	// If it's already an IP, dial directly
+	if ip := net.ParseIP(host); ip != nil {
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
+	ip, err := dnsLookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var d net.Dialer
+	return d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+}
+
+// dnsLookup resolves a hostname to an IPv4 address by sending a raw DNS query
+// to 8.8.8.8 over UDP. This bypasses Go's built-in resolver which reads
+// /etc/resolv.conf and in Termux points to [::1]:53 (unreachable).
+var dnsServers = []string{"8.8.8.8:53", "1.1.1.1:53"}
+
+func dnsLookup(ctx context.Context, host string) (net.IP, error) {
+	// Build a minimal DNS A-record query
+	query := buildDNSQuery(host)
+
+	for _, server := range dnsServers {
+		ip, err := dnsQueryServer(ctx, server, query)
+		if err == nil {
+			return ip, nil
+		}
+	}
+	return nil, fmt.Errorf("dns lookup %q failed on all servers", host)
+}
+
+func dnsQueryServer(ctx context.Context, server string, query []byte) (net.IP, error) {
+	conn, err := net.DialTimeout("udp", server, 3*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(deadline)
+	} else {
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+	}
+
+	if _, err := conn.Write(query); err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, 512)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	return parseDNSResponse(buf[:n])
+}
+
+func buildDNSQuery(host string) []byte {
+	// Header: ID=0x1234, flags=standard query, 1 question, 0 answers
+	var msg []byte
+	msg = append(msg, 0x12, 0x34) // ID
+	msg = append(msg, 0x01, 0x00) // flags: standard query, recursion desired
+	msg = append(msg, 0x00, 0x01) // 1 question
+	msg = append(msg, 0x00, 0x00) // 0 answers
+	msg = append(msg, 0x00, 0x00) // 0 authority
+	msg = append(msg, 0x00, 0x00) // 0 additional
+
+	// Encode hostname as labels
+	for _, label := range strings.Split(host, ".") {
+		msg = append(msg, byte(len(label)))
+		msg = append(msg, []byte(label)...)
+	}
+	msg = append(msg, 0x00)       // root label
+	msg = append(msg, 0x00, 0x01) // type A
+	msg = append(msg, 0x00, 0x01) // class IN
+
+	return msg
+}
+
+func parseDNSResponse(buf []byte) (net.IP, error) {
+	if len(buf) < 12 {
+		return nil, fmt.Errorf("dns response too short")
+	}
+	// Skip header (12 bytes), skip question section
+	qdCount := int(buf[4])<<8 | int(buf[5])
+	anCount := int(buf[6])<<8 | int(buf[7])
+	if anCount == 0 {
+		return nil, fmt.Errorf("dns: no answers")
+	}
+
+	offset := 12
+	// Skip questions
+	for i := 0; i < qdCount; i++ {
+		for offset < len(buf) && buf[offset] != 0 {
+			if buf[offset]&0xC0 == 0xC0 { // compressed label
+				offset += 2
+				break
+			}
+			offset += int(buf[offset]) + 1
+		}
+		if offset < len(buf) && buf[offset] == 0 {
+			offset++ // null terminator
+		}
+		offset += 4 // type + class
+	}
+
+	// Parse first answer
+	for i := 0; i < anCount && offset < len(buf); i++ {
+		// Skip name (may be compressed)
+		if buf[offset]&0xC0 == 0xC0 {
+			offset += 2
+		} else {
+			for offset < len(buf) && buf[offset] != 0 {
+				offset += int(buf[offset]) + 1
+			}
+			if offset < len(buf) {
+				offset++
+			}
+		}
+		if offset+10 > len(buf) {
+			break
+		}
+		// type := int(buf[offset])<<8 | int(buf[offset+1])
+		rdLength := int(buf[offset+8])<<8 | int(buf[offset+9])
+		offset += 10
+		if offset+rdLength > len(buf) {
+			break
+		}
+		// type A (1) with rdLength 4 = IPv4
+		if rdLength == 4 {
+			ip := net.IPv4(buf[offset], buf[offset+1], buf[offset+2], buf[offset+3])
+			return ip, nil
+		}
+		offset += rdLength
+	}
+	return nil, fmt.Errorf("dns: no A record found")
 }
