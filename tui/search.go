@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hishantik/anilix/aniskip"
+	"github.com/hishantik/anilix/config"
 	allanime "github.com/hishantik/anilix/provider/allanime"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
@@ -200,6 +202,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.String() == "up", msg.String() == "down":
 				m.textInput.Blur()
 				// pass through to list handling below
+			case key.Matches(msg, m.keymap.Toggle):
+				if m.searchState.TranslationType == "sub" {
+					m.searchState.TranslationType = "dub"
+				} else {
+					m.searchState.TranslationType = "sub"
+				}
+				return m, nil
 			default:
 				var cmd tea.Cmd
 				m.textInput, cmd = m.textInput.Update(msg)
@@ -306,7 +315,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.episodeState.Playing = true
 					m.progressPercent = 0
 					m.progressStart = time.Now()
-					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name))
+					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name, selectedAnime.MALID))
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -565,7 +574,9 @@ func (m *SearchModel) viewConfirmQuit() string {
 	boxWidth := 40
 	title := titleStyle.Width(boxWidth).Render("Quit Anilix?")
 	prompt := promptStyle.Width(boxWidth).Render("Are you sure you want to quit?")
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center, btnYesStyle.Render("Yes"), btnNoStyle.Render("No"))
+	buttons := lipgloss.NewStyle().MarginTop(1).Render(
+		lipgloss.JoinHorizontal(lipgloss.Center, btnYesStyle.Render("Yes"), btnNoStyle.Render("No")),
+	)
 
 	popup := lipgloss.JoinVertical(lipgloss.Center, title, prompt, buttons)
 
@@ -1231,7 +1242,7 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 	}
 }
 
-func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd {
+func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID int) tea.Cmd {
 	return func() tea.Msg {
 		translationType := m.searchState.TranslationType
 		if translationType == "" {
@@ -1257,7 +1268,16 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 			return TUIErrorMsg{Err: fmt.Errorf("no streams found")}
 		}
 
-		playStream := tryPlayStream(streams, animeTitle, episodeNum)
+		// Fetch AniSkip skip times if enabled and MAL ID is available
+		var skipTimes []aniskip.SkipInterval
+		if config.GetBool("aniskip.enabled") && malID > 0 {
+			epNum, _ := strconv.Atoi(episodeNum)
+			if times, err := aniskip.GetSkipTimes(malID, epNum); err == nil {
+				skipTimes = times
+			}
+		}
+
+		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes)
 		if playStream == nil {
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
 		}
@@ -1266,7 +1286,7 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string) tea.Cmd
 	}
 }
 
-func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *source.Stream {
+func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skipTimes []aniskip.SkipInterval) *source.Stream {
 	d := &player.Detector{}
 
 	// On Android, sort streams: no-referrer first (more likely to work)
@@ -1275,6 +1295,16 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 	if player.IsAndroid() {
 		sort.SliceStable(ordered, func(i, j int) bool {
 			return !ordered[i].NeedsReferrer && ordered[j].NeedsReferrer
+		})
+	}
+
+	// Convert aniskip intervals to player skip intervals
+	var playerSkips []player.SkipInterval
+	for _, st := range skipTimes {
+		playerSkips = append(playerSkips, player.SkipInterval{
+			Start: st.StartTime,
+			End:   st.EndTime,
+			Type:  st.Type,
 		})
 	}
 
@@ -1288,6 +1318,7 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string) *sou
 		opts := player.Options{
 			Title:     fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
 			Referrer:  s.Referer,
+			SkipTimes: playerSkips,
 		}
 		for _, sub := range s.Subtitles {
 			opts.Subtitles = append(opts.Subtitles, sub.URL)

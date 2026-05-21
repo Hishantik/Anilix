@@ -1,22 +1,35 @@
 package player
 
 import (
+	_ "embed"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+//go:embed ani-skip.lua
+var aniSkipLuaScript string
 
 type Player struct {
 	Name string
 }
 
+// SkipInterval represents a skip segment (intro/outro) from AniSkip.
+type SkipInterval struct {
+	Start float64
+	End   float64
+	Type  string // "op" or "ed"
+}
+
 type Options struct {
-	Title     string
-	Subtitles []string
-	Referrer  string
+	Title      string
+	Subtitles  []string
+	Referrer   string
+	SkipTimes  []SkipInterval
 }
 
 var (
@@ -149,8 +162,47 @@ func (p *Player) mpvArgs(url string, opts Options) []string {
 		args = append(args, "--referrer="+opts.Referrer)
 	}
 
+	if len(opts.SkipTimes) > 0 {
+		scriptPath := ensureSkipScript()
+		if scriptPath != "" {
+			args = append(args, "--script="+scriptPath)
+			args = append(args, "--script-opts=ani_skip_times="+formatSkipOpts(opts.SkipTimes))
+		}
+	}
+
 	args = append(args, url)
 	return args
+}
+
+// ensureSkipScript writes the bundled Lua script to ~/.anilix/ani-skip.lua
+// if it doesn't already exist. Returns the path, or empty string on failure.
+func ensureSkipScript() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".anilix")
+	_ = os.MkdirAll(dir, 0755)
+
+	path := filepath.Join(dir, "ani-skip.lua")
+	if _, err := os.Stat(path); err == nil {
+		return path // already exists
+	}
+
+	if err := os.WriteFile(path, []byte(aniSkipLuaScript), 0644); err != nil {
+		return ""
+	}
+	return path
+}
+
+// formatSkipOpts encodes skip intervals into mpv script-opts format:
+// "op:87.5-118.2,ed:1340.0-1370.5"
+func formatSkipOpts(intervals []SkipInterval) string {
+	var parts []string
+	for _, iv := range intervals {
+		parts = append(parts, fmt.Sprintf("%s:%.1f-%.1f", iv.Type, iv.Start, iv.End))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (p *Player) vlcArgs(url string, opts Options) []string {

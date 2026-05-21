@@ -49,6 +49,7 @@ func setDefaults() {
 	v.SetDefault("quality", "1080p")
 	v.SetDefault("source", "")
 	v.SetDefault("history.enabled", true)
+	v.SetDefault("aniskip.enabled", true)
 }
 
 func setPaths() {
