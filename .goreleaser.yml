@@ -10,7 +10,7 @@ builds:
   - binary: anilix
 
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
 
     goos:
       - linux
