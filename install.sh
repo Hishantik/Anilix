@@ -103,7 +103,12 @@ detect_install_dir() {
 # --- Get latest version from GitHub API ---
 get_latest_version() {
     need_cmd curl
-    tag=$(curl -fsSL "$API_URL" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/')
+    json=$(curl -fsSL "$API_URL")
+    if command -v jq >/dev/null 2>&1; then
+        tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
+    else
+        tag=$(printf '%s' "$json" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/')
+    fi
     [ -z "$tag" ] && die "Failed to fetch latest version from GitHub"
     echo "$tag"
 }
@@ -148,6 +153,7 @@ do_install() {
 
     # Extract
     info "Extracting..."
+    orig_dir=$(pwd)
     cd "$TMPDIR"
     if [ "$os" = "windows" ]; then
         need_cmd unzip
@@ -155,6 +161,7 @@ do_install() {
     else
         tar -xzf "$archive_name"
     fi
+    cd "$orig_dir"
 
     # Find binary
     if [ ! -f "${TMPDIR}/${BINARY}" ]; then
@@ -163,7 +170,13 @@ do_install() {
 
     # Install
     chmod +x "${TMPDIR}/${BINARY}"
-    cp "${TMPDIR}/${BINARY}" "${install_dir}/${BINARY}"
+    if [ -w "$install_dir" ]; then
+        cp "${TMPDIR}/${BINARY}" "${install_dir}/${BINARY}"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo cp "${TMPDIR}/${BINARY}" "${install_dir}/${BINARY}"
+    else
+        die "No write permission to ${install_dir} and sudo not available"
+    fi
 
     ok "Installed ${BOLD}${install_dir}/${BINARY}${RESET}"
 
@@ -179,11 +192,12 @@ do_install() {
     esac
 
     # Dependency check
-    check_deps
+    check_deps "$os"
 }
 
 # --- Check dependencies ---
 check_deps() {
+    os="${1:-$(detect_os)}"
     has_player=false
 
     if command -v mpv >/dev/null 2>&1; then
@@ -199,10 +213,10 @@ check_deps() {
         printf "\n  Install suggestions:\n"
         if is_termux; then
             printf "    ${BOLD}pkg install mpv${RESET}\n"
-        elif [ "$(detect_os)" = "darwin" ]; then
+        elif [ "$os" = "darwin" ]; then
             printf "    ${BOLD}brew install mpv${RESET}      # or\n"
             printf "    ${BOLD}brew install --cask iina${RESET}\n"
-        elif [ "$(detect_os)" = "windows" ]; then
+        elif [ "$os" = "windows" ]; then
             printf "    Download mpv from: https://mpv.io/installation/\n"
         elif command -v apt >/dev/null 2>&1; then
             printf "    ${BOLD}sudo apt install mpv${RESET}\n"
