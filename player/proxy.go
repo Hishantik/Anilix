@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,8 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 			targetURL = u
 		}
 
+		fmt.Fprintf(os.Stderr, "[anilix-proxy] %s %s (target: %.120s)\n", r.Method, r.URL.String(), targetURL)
+
 		// Check playlist cache (2s TTL)
 		plCacheMu.Lock()
 		if e, ok := plCache[targetURL]; ok && time.Now().Before(e.expiresAt) {
@@ -79,6 +82,7 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 
 		req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "[anilix-proxy] bad request: %v\n", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -95,6 +99,7 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 
 		resp, err := client.Do(req)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "[anilix-proxy] fetch error: %v\n", err)
 			http.Error(w, "fetch failed", http.StatusBadGateway)
 			return
 		}
@@ -108,6 +113,8 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 				ct = sniffed
 			}
 		}
+
+		fmt.Fprintf(os.Stderr, "[anilix-proxy] upstream %d %s (ct: %s)\n", resp.StatusCode, targetURL, ct)
 
 		// Playlist: read fully, rewrite URLs, cache 2s — must handle
 		// before WriteHeader because rewriting changes Content-Length.
@@ -157,7 +164,9 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 	srv := &http.Server{Handler: mux}
 
 	go func() {
-		srv.Serve(listener)
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "[anilix-proxy] server error: %v\n", err)
+		}
 	}()
 
 	stop = func() {
