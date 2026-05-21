@@ -127,6 +127,10 @@ do_install() {
         ext="zip"
         archive_name="${BINARY}_${os}_${arch}.${ext}"
         url="${BASE_URL}/${version}/${archive_name}"
+    elif is_termux; then
+        ext="tar.gz"
+        archive_name="${BINARY}_termux_${arch}.${ext}"
+        url="${BASE_URL}/${version}/${archive_name}"
     else
         ext="tar.gz"
         archive_name="${BINARY}_${os}_${arch}.${ext}"
