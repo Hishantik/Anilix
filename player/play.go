@@ -62,9 +62,6 @@ func (p *Player) Launch(url string, opts Options) error {
 	}
 
 	if p.Name == "mpv-android" || p.Name == "vlc-android" {
-		fmt.Fprintf(os.Stderr, "[anilix] stream URL: %s\n", url)
-		fmt.Fprintf(os.Stderr, "[anilix] referrer: %s\n", opts.Referrer)
-
 		// Start local proxy so the player can fetch via localhost
 		localURL, stop, err := StartProxy(url, opts.Referrer)
 		if err != nil {
@@ -82,7 +79,6 @@ func (p *Player) Launch(url string, opts Options) error {
 			stop()
 			return fmt.Errorf("proxy not ready: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "[anilix] proxy ready at %s\n", localURL)
 
 		// Replace -d URL arg with local proxy URL
 		for i, a := range args {
@@ -93,25 +89,16 @@ func (p *Player) Launch(url string, opts Options) error {
 		}
 
 		// Try am start with -n flag first (works on real Android am)
-		fmt.Fprintf(os.Stderr, "[anilix] running: am %s\n", strings.Join(args, " "))
 		cmd := exec.Command("am", args...)
-		out, err := cmd.CombinedOutput()
+		_, err = cmd.CombinedOutput()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[anilix] am start failed: %s\n", string(out))
-
 			// Fallback: try without -n (Termux am wrapper doesn't support -n)
 			argsNoN := removeFlag(args, "-n", 1)
-			fmt.Fprintf(os.Stderr, "[anilix] retrying: am %s\n", strings.Join(argsNoN, " "))
 			cmd2 := exec.Command("am", argsNoN...)
-			out2, err2 := cmd2.CombinedOutput()
+			_, err2 := cmd2.CombinedOutput()
 			if err2 != nil {
-				return fmt.Errorf("am start failed (both attempts): %s %w", string(out2), err2)
+				return fmt.Errorf("am start failed (both attempts): %w", err2)
 			}
-			if len(out2) > 0 {
-				fmt.Fprintf(os.Stderr, "[anilix] am output: %s\n", string(out2))
-			}
-		} else if len(out) > 0 {
-			fmt.Fprintf(os.Stderr, "[anilix] am output: %s\n", string(out))
 		}
 		return nil
 	}
