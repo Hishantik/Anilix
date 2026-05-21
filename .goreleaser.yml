@@ -33,7 +33,7 @@ builds:
       - CGO_ENABLED=0
 
     goos:
-      - linux
+      - android
 
     goarch:
       - arm64
