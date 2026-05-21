@@ -7,7 +7,8 @@ before:
     - go mod tidy
 
 builds:
-  - binary: anilix
+  - id: desktop
+    binary: anilix
 
     env:
       - CGO_ENABLED=0
@@ -25,8 +26,21 @@ builds:
       - goos: windows
         goarch: arm64
 
+  - id: termux
+    binary: anilix
+
+    goos:
+      - linux
+
+    goarch:
+      - arm64
+
 archives:
-  - formats:
+  - id: desktop-archive
+    ids:
+      - desktop
+
+    formats:
       - tar.gz
 
     name_template: >-
@@ -36,6 +50,16 @@ archives:
       - goos: windows
         formats:
           - zip
+
+  - id: termux-archive
+    ids:
+      - termux
+
+    formats:
+      - tar.gz
+
+    name_template: >-
+      {{ .ProjectName }}_termux_{{ .Arch }}
 
 checksum:
   name_template: checksums.txt
