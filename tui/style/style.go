@@ -1,22 +1,26 @@
 package style
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 func New() lipgloss.Style {
 	return lipgloss.NewStyle()
 }
 
-func NewColored(foreground, background lipgloss.Color) lipgloss.Style {
+func NewColored(foreground, background color.Color) lipgloss.Style {
 	return New().Foreground(foreground).Background(background)
 }
 
-func Fg(color lipgloss.Color) func(string) string {
-	s := NewColored(color, "")
+func Fg(c color.Color) func(string) string {
+	s := NewColored(c, nil)
 	return func(str string) string { return s.Render(str) }
 }
 
-func Bg(color lipgloss.Color) func(string) string {
-	s := NewColored("", color)
+func Bg(c color.Color) func(string) string {
+	s := NewColored(nil, c)
 	return func(str string) string { return s.Render(str) }
 }
 

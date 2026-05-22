@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"math"
 	"regexp"
 	"sort"
@@ -20,14 +21,14 @@ import (
 	"github.com/hishantik/anilix/player"
 	"github.com/hishantik/anilix/tui/style"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 var (
@@ -103,18 +104,22 @@ func NewSearchModel() *SearchModel {
 	ti.Placeholder = "Type to search..."
 	ti.Focus()
 	ti.Prompt = "> "
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
-	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	ts := textinput.DefaultStyles(true)
+	ts.Focused.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	ts.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	ts.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	ti.SetStyles(ts)
 
 	allanimeProvider := allanime.NewAllanimeProvider()
 	allanimeProvider.SetTranslation("sub")
 
-	help := help.New()
-	help.Styles.ShortKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
-	help.Styles.ShortDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
-	help.Styles.FullKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
-	help.Styles.FullDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	h := help.New()
+	hs := help.DefaultStyles(true)
+	hs.ShortKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	hs.ShortDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	hs.FullKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
+	hs.FullDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f6"))
+	h.Styles = hs
 
 	km := newKeymap()
 
@@ -122,8 +127,8 @@ func NewSearchModel() *SearchModel {
 	s.Spinner = spinner.Points
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
 
-	p := progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
-	p.Width = 40
+	p := progress.New(progress.WithColors(lipgloss.Color("#9d4edd"), lipgloss.Color("#c084fc")), progress.WithScaled(true))
+	p.SetWidth(40)
 
 	searchList := makeList("Search Results", km)
 	episodeList := makeList("Episodes", km)
@@ -133,11 +138,17 @@ func NewSearchModel() *SearchModel {
 		searchState:      NewSearchState(),
 		episodeState:     NewEpisodeState(),
 		settingsState: &SettingsState{
-			Quality:        config.GetString("quality"),
+			Quality: func() string {
+				q := config.GetString("quality")
+				if q == "" {
+					return "auto"
+				}
+				return q
+			}(),
 			AniskipEnabled: config.GetBool("aniskip.enabled"),
 		},
 		textInput:        ti,
-		help:             help,
+		help:             h,
 		keymap:           km,
 		loading:          s,
 		progress:         p,
@@ -227,6 +238,34 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.state == episodesState && m.textInput.Focused() {
+			switch {
+			case key.Matches(msg, m.keymap.Quit):
+				m.prevState = m.state
+				m.state = confirmQuitState
+				return m, nil
+			case key.Matches(msg, m.keymap.Back):
+				m.textInput.Blur()
+				return m, nil
+			case key.Matches(msg, m.keymap.Select):
+				query := m.textInput.Value()
+				if query != "" {
+					m.selectEpisodeByNumber(query)
+				}
+				m.textInput.Blur()
+				return m, nil
+			case msg.String() == "up", msg.String() == "down":
+				m.textInput.Blur()
+				// pass through to list handling below
+			default:
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				cmds = append(cmds, cmd)
+				m.filterEpisodesByNumber(m.textInput.Value())
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 		// Handle settingsState keys
 		if m.state == settingsState {
 			switch msg.String() {
@@ -241,7 +280,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "left", "h", "right", "l":
 				if m.settingsState.Cursor == 0 {
 					// Quality cycle
-					qualities := []string{"1080p", "720p", "480p", "360p", "auto"}
+					qualities := []string{"best", "1080p", "720p", "480p", "360p", "auto"}
 					idx := 0
 					for i, q := range qualities {
 						if q == m.settingsState.Quality {
@@ -301,6 +340,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == episodesState {
 				m.state = searchState
 				m.episodeState = NewEpisodeState()
+				m.textInput.Placeholder = "Type to search..."
 				return m, nil
 			}
 
@@ -353,6 +393,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					anime := m.searchState.Results[m.searchState.Selected]
 					if anime.AllAnimeID != "" {
 						m.state = episodesState
+						m.textInput.Placeholder = "Search episode..."
 						m.episodeState.AnimeID = anime.AllAnimeID
 						m.episodeState.Loading = true
 						m.progressPercent = 0
@@ -407,7 +448,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.prefetchCancel = cancel
 				go m.prefetchMetadata(ctx, m.searchList.Index()+1, m.searchList.Index()+6)
 			}
-		} else if m.state == episodesState && len(m.episodeState.Episodes) > 0 {
+		} else if m.state == episodesState && !m.textInput.Focused() && len(m.episodeState.Episodes) > 0 {
+			// Auto-focus search bar when typing numbers
+			if msg.String() >= "0" && msg.String() <= "9" {
+				m.textInput.Focus()
+				m.textInput.SetValue("")
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				cmds = append(cmds, cmd)
+				m.filterEpisodesByNumber(m.textInput.Value())
+				return m, tea.Batch(cmds...)
+			}
 			var cmd tea.Cmd
 			m.episodeList, cmd = m.episodeList.Update(msg)
 			cmds = append(cmds, cmd)
@@ -441,7 +492,8 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.prefetchCancel != nil {
 			m.prefetchCancel()
 		}
-		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
+		m.progress = progress.New(progress.WithColors(lipgloss.Color("#9d4edd"), lipgloss.Color("#c084fc")), progress.WithScaled(true))
+		m.progress.SetWidth(m.width)
 		if len(msg.Results) > 0 {
 			ctx, cancel := context.WithCancel(context.Background())
 			m.prefetchCancel = cancel
@@ -482,7 +534,8 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeState.EpisodeTitles = msg.EpisodeTitles
 		m.episodeState.Loading = false
 		m.progressPercent = 1.0
-		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
+		m.progress = progress.New(progress.WithColors(lipgloss.Color("#9d4edd"), lipgloss.Color("#c084fc")), progress.WithScaled(true))
+		m.progress.SetWidth(m.width)
 		if msg.Error != nil {
 			m.episodeState.Err = msg.Error
 		}
@@ -515,12 +568,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PlayStreamMsg:
 		m.episodeState.Playing = false
 		m.progressPercent = 1.0
-		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
+		m.progress = progress.New(progress.WithColors(lipgloss.Color("#9d4edd"), lipgloss.Color("#c084fc")), progress.WithScaled(true))
+		m.progress.SetWidth(m.width)
 
 	case TUIErrorMsg:
 		m.episodeState.Playing = false
 		m.progressPercent = 1.0
-		m.progress = progress.New(progress.WithScaledGradient("#9d4edd", "#c084fc"))
+		m.progress = progress.New(progress.WithColors(lipgloss.Color("#9d4edd"), lipgloss.Color("#c084fc")), progress.WithScaled(true))
+		m.progress.SetWidth(m.width)
 		m.episodeState.Err = msg.Err
 	}
 
@@ -544,21 +599,23 @@ func (m *SearchModel) resize(width, height int) {
 	if m.listWidth < 20 {
 		m.listWidth = 20
 	}
-	listHeight := styledHeight - 6
+	// Reserve space for: title(1) + margin(1) + searchBar(3) + margin(1) + progressBar(1) + helpBar(3) + padding(2)
+	usedHeight := 12
+	listHeight := styledHeight - usedHeight
 	if listHeight < 1 {
 		listHeight = 1
 	}
 
 	m.searchList.SetSize(m.listWidth, listHeight)
 	m.episodeList.SetSize(m.listWidth, listHeight)
-	m.textInput.Width = styledWidth / 2
-	m.help.Width = styledWidth
-	m.progress.Width = m.listWidth
+	m.textInput.SetWidth(styledWidth / 2)
+	m.help.SetWidth(styledWidth)
+	m.progress.SetWidth(m.width)
 }
 
-func (m *SearchModel) View() string {
+func (m *SearchModel) View() tea.View {
 	if m.width == 0 || m.height == 0 {
-		return "Loading..."
+		return tea.NewView("Loading...")
 	}
 
 	var content string
@@ -574,25 +631,57 @@ func (m *SearchModel) View() string {
 		content = m.viewSettings()
 	}
 
-	return m.renderContent(content)
+	v := tea.NewView(m.renderContent(content))
+	v.AltScreen = true
+	return v
+}
+
+func gradientText(text string, colors []string) string {
+	var result strings.Builder
+	for i, ch := range text {
+		colorIdx := i * (len(colors) - 1) / (len(text) - 1)
+		if colorIdx >= len(colors) {
+			colorIdx = len(colors) - 1
+		}
+		result.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colors[colorIdx])).Render(string(ch)))
+	}
+	return result.String()
 }
 
 func (m *SearchModel) viewSearchState() string {
 	panelWidth := m.listWidth
 
-	leftPanel := m.renderLeftPanel(panelWidth)
-	rightPanel := m.renderRightPanel(panelWidth)
+	gradientColors := []string{"#9d4edd", "#a855f7", "#b366ff", "#c084fc"}
+	title := gradientText("ANILIX", gradientColors)
+	titleLine := lipgloss.NewStyle().PaddingLeft(2).MarginBottom(1).Render(title)
+	gradientBorderColors := []color.Color{lipgloss.Color("#9d4edd"), lipgloss.Color("#a855f7"), lipgloss.Color("#b366ff"), lipgloss.Color("#c084fc")}
+	searchBar := lipgloss.NewStyle().Width(panelWidth / 2).Border(lipgloss.RoundedBorder()).BorderForegroundBlend(gradientBorderColors...).Padding(0, 1).MarginBottom(1).Render(m.textInput.View())
+	leftPanel := lipgloss.NewStyle().Width(panelWidth).MaxWidth(panelWidth).Render(m.renderLeftPanel(panelWidth))
+	rightPanelContent := m.renderRightPanel(panelWidth)
+	rightPanel := lipgloss.NewStyle().Width(panelWidth).MaxWidth(panelWidth).Render(rightPanelContent)
+	if m.searchState.Metadata != nil && !m.searchState.MetadataLoading {
+		rightPanel = lipgloss.NewStyle().Width(panelWidth-6).MaxWidth(panelWidth-6).Border(lipgloss.RoundedBorder()).BorderForegroundBlend(gradientBorderColors...).Padding(0, 1).Margin(1).Render(rightPanelContent)
+	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	return titleLine + "\n" + searchBar + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 }
 
 func (m *SearchModel) viewEpisodesState() string {
 	panelWidth := m.listWidth
 
-	leftPanel := m.renderEpisodeLeftPanel(panelWidth)
-	rightPanel := m.renderEpisodeRightPanel(panelWidth)
+	gradientColors := []string{"#9d4edd", "#a855f7", "#b366ff", "#c084fc"}
+	title := gradientText("ANILIX", gradientColors)
+	titleLine := lipgloss.NewStyle().PaddingLeft(2).MarginBottom(1).Render(title)
+	gradientBorderColors := []color.Color{lipgloss.Color("#9d4edd"), lipgloss.Color("#a855f7"), lipgloss.Color("#b366ff"), lipgloss.Color("#c084fc")}
+	searchBar := lipgloss.NewStyle().Width(panelWidth / 2).Border(lipgloss.RoundedBorder()).BorderForegroundBlend(gradientBorderColors...).Padding(0, 1).MarginBottom(1).Render(m.textInput.View())
+	leftPanel := lipgloss.NewStyle().Width(panelWidth).MaxWidth(panelWidth).Render(m.renderEpisodeLeftPanel(panelWidth))
+	rightPanelContent := m.renderEpisodeRightPanel(panelWidth)
+	rightPanel := lipgloss.NewStyle().Width(panelWidth).MaxWidth(panelWidth).Render(rightPanelContent)
+	if m.episodeState.EpisodeMetadata != nil && !m.episodeState.MetadataLoading {
+		rightPanel = lipgloss.NewStyle().Width(panelWidth-6).MaxWidth(panelWidth-6).Border(lipgloss.RoundedBorder()).BorderForegroundBlend(gradientBorderColors...).Padding(0, 1).Margin(1).Render(rightPanelContent)
+	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	return titleLine + "\n" + searchBar + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 }
 
 func (m *SearchModel) viewConfirmQuit() string {
@@ -715,14 +804,8 @@ func (m *SearchModel) renderLeftPanel(width int) string {
 	headerLine := subDubPaddingStyle.Render(switchText + qualityText)
 	lines = append(lines, lipgloss.NewStyle().MaxWidth(width).Render(headerLine))
 	lines = append(lines, "")
-	lines = append(lines, m.textInput.View())
 	lines = append(lines, "")
 	lines = append(lines, m.searchList.View())
-
-	if m.searchState.Loading {
-		lines = append(lines, "")
-		lines = append(lines, m.progress.ViewAs(m.progressPercent))
-	}
 
 	return strings.Join(lines, "\n")
 }
@@ -734,11 +817,12 @@ func (m *SearchModel) renderRightPanel(width int) string {
 	}
 
 	if m.searchState.Metadata == nil {
-		return ""
+		return lipgloss.NewStyle().Width(m.listWidth).Padding(1, 2).Render("")
 	}
 
 	lines := m.renderMetadata(width)
-	maxLines := m.height - 6
+	// Reserve space for: title(1) + margin(1) + searchBar(3) + margin(1) + progressBar(1) + helpBar(3) + padding(2)
+	maxLines := m.height - 12
 	if maxLines < 1 {
 		maxLines = 1
 	}
@@ -757,17 +841,8 @@ func (m *SearchModel) renderEpisodeLeftPanel(width int) string {
 	lines = append(lines, lipgloss.NewStyle().MaxWidth(width).Render(headerLine))
 	lines = append(lines, "")
 	lines = append(lines, "")
+	lines = append(lines, "")
 	lines = append(lines, m.episodeList.View())
-
-	if m.episodeState.Loading {
-		lines = append(lines, "")
-		lines = append(lines, m.progress.ViewAs(m.progressPercent))
-	}
-
-	if m.episodeState.Playing {
-		lines = append(lines, "")
-		lines = append(lines, m.progress.ViewAs(m.progressPercent))
-	}
 
 	return strings.Join(lines, "\n")
 }
@@ -779,11 +854,11 @@ func (m *SearchModel) renderEpisodeRightPanel(width int) string {
 	}
 
 	if len(m.episodeState.Episodes) == 0 {
-		return paddingStyle.Render(style.Faint("No episodes"))
+		return lipgloss.NewStyle().Width(m.listWidth).Padding(1, 2).Render(style.Faint("No episodes"))
 	}
 
 	if m.episodeState.Selected >= len(m.episodeState.Episodes) {
-		return paddingStyle.Render(style.Faint("Select an episode"))
+		return lipgloss.NewStyle().Width(m.listWidth).Padding(1, 2).Render(style.Faint("Select an episode"))
 	}
 
 	meta := m.episodeState.EpisodeMetadata
@@ -793,14 +868,16 @@ func (m *SearchModel) renderEpisodeRightPanel(width int) string {
 		if len(m.episodeState.EpisodeTitles) > m.episodeState.Selected {
 			selectedTitle = m.episodeState.EpisodeTitles[m.episodeState.Selected]
 		}
+		titleStyle := style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Width(m.listWidth - paddingStyle.GetHorizontalFrameSize())
 		if selectedTitle != "" {
-			return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(fmt.Sprintf("Episode %s: %s", selectedEp, selectedTitle)))
+			return paddingStyle.Render(titleStyle.Render(fmt.Sprintf("Episode %s: %s", selectedEp, selectedTitle)))
 		}
-		return paddingStyle.Render(style.New().Foreground(lipgloss.Color("#9d4edd")).Bold(true).Render(fmt.Sprintf("Episode %s", selectedEp)))
+		return paddingStyle.Render(titleStyle.Render(fmt.Sprintf("Episode %s", selectedEp)))
 	}
 
 	lines := m.renderEpisodeMetadata(width)
-	maxLines := m.height - 6
+	// Reserve space for: title(1) + margin(1) + searchBar(3) + margin(1) + progressBar(1) + helpBar(3) + padding(2)
+	maxLines := m.height - 12
 	if maxLines < 1 {
 		maxLines = 1
 	}
@@ -936,7 +1013,15 @@ func (m *SearchModel) renderContent(content string) string {
 	if remaining < 0 {
 		remaining = 0
 	}
-	return content + strings.Repeat("\n", remaining) + helpView
+
+	var progressBar string
+	if m.searchState.Loading || m.episodeState.Loading || m.episodeState.Playing {
+		progressBar = lipgloss.NewStyle().Align(lipgloss.Center).Width(m.width).Render(m.progress.ViewAs(m.progressPercent)) + "\n"
+	}
+
+	helpBox := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(lipgloss.Color("#9d4edd"), lipgloss.Color("#a855f7"), lipgloss.Color("#b366ff"), lipgloss.Color("#c084fc")).Padding(0, 2).Render(helpView)
+	centeredHelp := lipgloss.Place(m.width, lipgloss.Height(helpBox), lipgloss.Center, lipgloss.Top, helpBox)
+	return content + strings.Repeat("\n", remaining) + progressBar + centeredHelp
 }
 
 func (m *SearchModel) updateSearchList() {
@@ -965,6 +1050,40 @@ func (m *SearchModel) updateEpisodeList() {
 		cmd()
 	}
 	m.episodeList.Select(m.episodeState.Selected)
+}
+
+func (m *SearchModel) filterEpisodesByNumber(query string) {
+	if query == "" {
+		m.updateEpisodeList()
+		return
+	}
+	items := make([]list.Item, 0)
+	for i, ep := range m.episodeState.Episodes {
+		if strings.Contains(ep, query) {
+			title := ""
+			if len(m.episodeState.EpisodeTitles) > i {
+				title = m.episodeState.EpisodeTitles[i]
+			}
+			items = append(items, episodeItem{number: ep, title: title})
+		}
+	}
+	cmd := m.episodeList.SetItems(items)
+	if cmd != nil {
+		cmd()
+	}
+	if len(items) > 0 {
+		m.episodeList.Select(0)
+	}
+}
+
+func (m *SearchModel) selectEpisodeByNumber(query string) {
+	for i, ep := range m.episodeState.Episodes {
+		if ep == query || strings.Contains(ep, query) {
+			m.episodeState.Selected = i
+			m.episodeList.Select(i)
+			return
+		}
+	}
 }
 
 func (m *SearchModel) doSearch(query string) tea.Cmd {
@@ -1441,6 +1560,11 @@ func filterByQuality(streams []*source.Stream, quality string) []*source.Stream 
 		return streams
 	}
 
+	// "best" returns all streams, let the player handle quality selection
+	if quality == "best" {
+		return streams
+	}
+
 	target := parseQualityNum(quality)
 
 	// Exact match
@@ -1670,9 +1794,9 @@ type progressTickMsg struct{}
 
 func RunSearch() (*SelectionResult, error) {
 	model := NewSearchModel()
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 
-	err := p.Start()
+	_, err := p.Run()
 	if err != nil {
 		return nil, err
 	}

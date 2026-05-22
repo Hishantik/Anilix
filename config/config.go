@@ -46,7 +46,7 @@ func setEnvs() {
 
 func setDefaults() {
 	v.SetDefault("player", "mpv")
-	v.SetDefault("quality", "480p")
+	v.SetDefault("quality", "auto")
 	v.SetDefault("source", "")
 	v.SetDefault("history.enabled", true)
 	v.SetDefault("aniskip.enabled", true)
