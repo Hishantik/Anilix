@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"time"
-
-	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/source"
 )
 
@@ -12,7 +9,7 @@ type tuiState int
 
 const (
 	searchState tuiState = iota
-	episodesState
+	detailState
 	confirmQuitState
 	settingsState
 )
@@ -85,19 +82,6 @@ type SettingsState struct {
 	Cursor         int // 0 = quality, 1 = aniskip
 }
 
-// EpisodeMetadataFetchTriggered is sent when metadata fetch is triggered
-type EpisodeMetadataFetchTriggered struct {
-	Index int
-}
-
-// EpisodeMetadataLoadedMsg is sent when episode metadata is loaded
-type EpisodeMetadataLoadedMsg struct {
-	Metadata   *EpisodeMetadataPanel
-	Index      int
-	CacheKey   string         `json:"-"` // key to write into episodeMetadataCache
-	RawEpisode *jikan.Episode `json:"-"` // raw episode data for caching
-}
-
 // NewSearchState creates a new search state
 func NewSearchState() *SearchState {
 	return &SearchState{
@@ -118,10 +102,4 @@ func NewEpisodeState() *EpisodeState {
 		Selected: 0,
 		Loading:  false,
 	}
-}
-
-// debounceSearch triggers a search after a delay
-func debounceSearch(delay time.Duration, fn func()) {
-	time.Sleep(delay)
-	fn()
 }
