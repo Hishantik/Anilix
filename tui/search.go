@@ -92,6 +92,7 @@ type SearchModel struct {
 	prefetchCancel        context.CancelFunc
 	debounceTimer         *time.Timer
 	episodeTitlesCache    map[int][]string
+	episodeTitlesCacheMu  sync.Mutex
 	episodeMetadataCache  map[string]*jikan.Episode
 	metadataFetchChan     chan int
 	episodeMetadataChan   chan int
@@ -488,7 +489,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressPercent = 1.0
 		m.searchState.Selected = 0
 		m.textInput.Blur()
+		m.episodeTitlesCacheMu.Lock()
 		m.episodeTitlesCache = make(map[int][]string)
+		m.episodeTitlesCacheMu.Unlock()
 		if m.prefetchCancel != nil {
 			m.prefetchCancel()
 		}
@@ -504,24 +507,34 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
 			cmds = append(cmds, m.fetchMetadata())
 			cmds = append(cmds, func() tea.Msg {
-				idx := <-m.metadataFetchChan
-				return MetadataFetchTriggered{Index: idx}
+				select {
+				case idx := <-m.metadataFetchChan:
+					return MetadataFetchTriggered{Index: idx}
+				case <-time.After(30 * time.Second):
+					return MetadataFetchTriggered{Index: -1}
+				}
 			})
 		}
 		m.updateSearchList()
 
 	case MetadataFetchTriggered:
-		if msg.Index == m.searchState.Selected {
+		if msg.Index >= 0 && msg.Index == m.searchState.Selected {
 			m.searchState.MetadataLoading = true
 			m.loading = spinner.New()
 			m.loading.Spinner = spinner.Points
 			m.loading.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9d4edd"))
 			cmds = append(cmds, m.fetchMetadata())
 		}
-		cmds = append(cmds, func() tea.Msg {
-			idx := <-m.metadataFetchChan
-			return MetadataFetchTriggered{Index: idx}
-		})
+		if msg.Index >= 0 {
+			cmds = append(cmds, func() tea.Msg {
+				select {
+				case idx := <-m.metadataFetchChan:
+					return MetadataFetchTriggered{Index: idx}
+				case <-time.After(30 * time.Second):
+					return MetadataFetchTriggered{Index: -1}
+				}
+			})
+		}
 
 	case MetadataLoadedMsg:
 		if msg.Index == m.searchState.Selected {
@@ -544,22 +557,35 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.episodeState.MetadataLoading = true
 			cmds = append(cmds, m.fetchEpisodeMetadata())
 			cmds = append(cmds, func() tea.Msg {
-				idx := <-m.episodeMetadataChan
-				return EpisodeMetadataFetchTriggered{Index: idx}
+				select {
+				case idx := <-m.episodeMetadataChan:
+					return EpisodeMetadataFetchTriggered{Index: idx}
+				case <-time.After(30 * time.Second):
+					return EpisodeMetadataFetchTriggered{Index: -1}
+				}
 			})
 		}
 
 	case EpisodeMetadataFetchTriggered:
-		if msg.Index == m.episodeState.Selected {
+		if msg.Index >= 0 && msg.Index == m.episodeState.Selected {
 			m.episodeState.MetadataLoading = true
 			cmds = append(cmds, m.fetchEpisodeMetadata())
 		}
-		cmds = append(cmds, func() tea.Msg {
-			idx := <-m.episodeMetadataChan
-			return EpisodeMetadataFetchTriggered{Index: idx}
-		})
+		if msg.Index >= 0 {
+			cmds = append(cmds, func() tea.Msg {
+				select {
+				case idx := <-m.episodeMetadataChan:
+					return EpisodeMetadataFetchTriggered{Index: idx}
+				case <-time.After(30 * time.Second):
+					return EpisodeMetadataFetchTriggered{Index: -1}
+				}
+			})
+		}
 
 	case EpisodeMetadataLoadedMsg:
+		if msg.CacheKey != "" && msg.RawEpisode != nil {
+			m.episodeMetadataCache[msg.CacheKey] = msg.RawEpisode
+		}
 		if msg.Index == m.episodeState.Selected {
 			m.episodeState.EpisodeMetadata = msg.Metadata
 			m.episodeState.MetadataLoading = false
@@ -637,6 +663,9 @@ func (m *SearchModel) View() tea.View {
 }
 
 func gradientText(text string, colors []string) string {
+	if len(text) == 0 || len(colors) == 0 {
+		return text
+	}
 	var result strings.Builder
 	for i, ch := range text {
 		colorIdx := i * (len(colors) - 1) / (len(text) - 1)
@@ -863,6 +892,9 @@ func (m *SearchModel) renderEpisodeRightPanel(width int) string {
 
 	meta := m.episodeState.EpisodeMetadata
 	if meta == nil {
+		if m.episodeState.Selected >= len(m.episodeState.Episodes) {
+			return lipgloss.NewStyle().Width(m.listWidth).Padding(1, 2).Render(style.Faint("Select an episode"))
+		}
 		selectedEp := m.episodeState.Episodes[m.episodeState.Selected]
 		var selectedTitle string
 		if len(m.episodeState.EpisodeTitles) > m.episodeState.Selected {
@@ -899,7 +931,10 @@ func (m *SearchModel) renderEpisodeMetadata(width int) []string {
 
 	var infoParts []string
 	if meta.Aired != "" {
-		aired := meta.Aired[:10]
+		aired := meta.Aired
+		if len(aired) > 10 {
+			aired = aired[:10]
+		}
 		infoParts = append(infoParts, fmt.Sprintf("Aired: %s", aired))
 	}
 	if meta.Duration > 0 {
@@ -1087,24 +1122,24 @@ func (m *SearchModel) selectEpisodeByNumber(query string) {
 }
 
 func (m *SearchModel) doSearch(query string) tea.Cmd {
-	return func() tea.Msg {
+	translationType := m.searchState.TranslationType
+	if translationType == "" {
+		translationType = "sub"
+	}
+	allanimeClient := m.allanimeClient
 
+	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		translationType := m.searchState.TranslationType
-		if translationType == "" {
-			translationType = "sub"
-		}
-
-		shows, err := m.allanimeClient.SearchShows(ctx, query, 20, 1, translationType)
+		shows, err := allanimeClient.SearchShows(ctx, query, 20, 1, translationType)
 		if err != nil {
 			return SearchErrorMsg{Err: err}
 		}
 
 		results := make([]*source.Anime, 0, len(shows))
 		for _, show := range shows {
-			anime := m.allanimeClient.MapToAnime(&show)
+			anime := allanimeClient.MapToAnime(&show)
 			results = append(results, anime)
 		}
 
@@ -1123,7 +1158,7 @@ func (m *SearchModel) doSearch(query string) tea.Cmd {
 }
 
 func (m *SearchModel) fetchMetadata() tea.Cmd {
-	if m.searchState.Selected >= len(m.searchState.Results) {
+	if len(m.searchState.Results) == 0 || m.searchState.Selected >= len(m.searchState.Results) {
 		m.searchState.Metadata = nil
 		m.searchState.MetadataLoading = false
 		return nil
@@ -1312,9 +1347,12 @@ func mergeMetadata(jikanData *jikan.AnimeData, anilistData *anilist.MediaData) *
 }
 
 func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
-	if end > len(m.searchState.Results) {
-		end = len(m.searchState.Results)
+	results := m.searchState.Results
+	if end > len(results) {
+		end = len(results)
 	}
+	anilistClient := m.anilistClient
+	jikanClient := m.jikanClient
 
 	anilistIDs := make([]int, 0)
 	anilistIndexMap := make(map[int]int)
@@ -1324,8 +1362,8 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 			return
 		default:
 		}
-		anime := m.searchState.Results[i]
-		if anime.AniListID > 0 && !m.anilistClient.IsCached(anime.AniListID) {
+		anime := results[i]
+		if anime.AniListID > 0 && !anilistClient.IsCached(anime.AniListID) {
 			anilistIDs = append(anilistIDs, anime.AniListID)
 			anilistIndexMap[anime.AniListID] = i
 		}
@@ -1345,7 +1383,7 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 			}
 			batch := anilistIDs[i:batchEnd]
 			batchCtx, batchCancel := context.WithTimeout(ctx, 10*time.Second)
-			_, _ = m.anilistClient.GetAnimeBatch(batchCtx, batch)
+			_, _ = anilistClient.GetAnimeBatch(batchCtx, batch)
 			batchCancel()
 		}
 	}
@@ -1357,8 +1395,8 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 			return
 		default:
 		}
-		anime := m.searchState.Results[i]
-		if anime.MALID > 0 && !m.jikanClient.IsCached(anime.MALID) {
+		anime := results[i]
+		if anime.MALID > 0 && !jikanClient.IsCached(anime.MALID) {
 			malIDs = append(malIDs, anime.MALID)
 		}
 	}
@@ -1370,53 +1408,61 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 		default:
 		}
 		dataCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_, _ = m.jikanClient.GetAnime(dataCtx, malID)
+		_, _ = jikanClient.GetAnime(dataCtx, malID)
 		cancel()
 		time.Sleep(350 * time.Millisecond)
 	}
 
+	newTitles := make(map[int][]string)
 	for i := start; i < end; i++ {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		anime := m.searchState.Results[i]
+		anime := results[i]
 		if anime.MALID == 0 {
 			continue
 		}
-		if _, ok := m.episodeTitlesCache[i]; ok {
-			continue
-		}
 		dataCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		episodes, err := m.jikanClient.GetEpisodes(dataCtx, anime.MALID)
+		episodes, err := jikanClient.GetEpisodes(dataCtx, anime.MALID)
 		cancel()
 		if err == nil && len(episodes) > 0 {
 			titles := make([]string, len(episodes))
 			for j, ep := range episodes {
 				titles[j] = ep.Title
 			}
-			m.episodeTitlesCache[i] = titles
+			newTitles[i] = titles
 		}
 		time.Sleep(350 * time.Millisecond)
 	}
+
+	if len(newTitles) > 0 {
+		m.episodeTitlesCacheMu.Lock()
+		for i, titles := range newTitles {
+			m.episodeTitlesCache[i] = titles
+		}
+		m.episodeTitlesCacheMu.Unlock()
+	}
+
+	m.metadataFetchChan <- -1
 }
 
 func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
-	m.episodeState.Loading = true
+	translationType := m.searchState.TranslationType
+	if translationType == "" {
+		translationType = "sub"
+	}
+	searchSelected := m.searchState.Selected
+	allanimeClient := m.allanimeClient
+	jikanClient := m.jikanClient
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		translationType := m.searchState.TranslationType
-		if translationType == "" {
-			translationType = "sub"
-		}
-		episodes, err := m.allanimeClient.GetShowEpisodes(ctx, showID, translationType)
+		episodes, err := allanimeClient.GetShowEpisodes(ctx, showID, translationType)
 		if err != nil {
-			m.episodeState.Err = err
-			m.episodeState.Loading = false
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
 
@@ -1424,19 +1470,18 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 		if !ok {
 			epList, ok = episodes["sub"]
 			if !ok {
-				m.episodeState.Err = fmt.Errorf("no episodes found for %s", translationType)
-				m.episodeState.Loading = false
-				return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: m.episodeState.Err}
+				return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: fmt.Errorf("no episodes found for %s", translationType)}
 			}
 		}
-		m.episodeState.Episodes = epList
-		m.episodeState.Selected = 0
 
+		m.episodeTitlesCacheMu.Lock()
 		var episodeTitles []string
-		if titles, ok := m.episodeTitlesCache[m.searchState.Selected]; ok {
+		if titles, ok := m.episodeTitlesCache[searchSelected]; ok {
 			episodeTitles = titles
-		} else if malID > 0 {
-			jikanEpisodes, err := m.jikanClient.GetEpisodes(ctx, malID)
+		}
+		m.episodeTitlesCacheMu.Unlock()
+		if len(episodeTitles) == 0 && malID > 0 {
+			jikanEpisodes, err := jikanClient.GetEpisodes(ctx, malID)
 			if err == nil && len(jikanEpisodes) > 0 {
 				episodeTitles = make([]string, len(jikanEpisodes))
 				for i, ep := range jikanEpisodes {
@@ -1444,15 +1489,19 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 				}
 			}
 		}
-		m.episodeState.EpisodeTitles = episodeTitles
-		m.episodeState.Loading = false
 
 		return EpisodesLoadedMsg{Episodes: epList, EpisodeTitles: episodeTitles, Error: nil}
 	}
 }
 
 func (m *SearchModel) fetchEpisodeMetadata() tea.Cmd {
-	if m.episodeState.Selected >= len(m.episodeState.Episodes) {
+	if len(m.episodeState.Episodes) == 0 || m.episodeState.Selected >= len(m.episodeState.Episodes) {
+		m.episodeState.EpisodeMetadata = nil
+		m.episodeState.MetadataLoading = false
+		return nil
+	}
+
+	if len(m.searchState.Results) == 0 || m.searchState.Selected >= len(m.searchState.Results) {
 		m.episodeState.EpisodeMetadata = nil
 		m.episodeState.MetadataLoading = false
 		return nil
@@ -1482,18 +1531,19 @@ func (m *SearchModel) fetchEpisodeMetadata() tea.Cmd {
 	}
 
 	idx := m.episodeState.Selected
+	malID := anime.MALID
+	jikanClient := m.jikanClient
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		episode, err := m.jikanClient.GetEpisode(ctx, anime.MALID, int(epNum))
+		episode, err := jikanClient.GetEpisode(ctx, malID, int(epNum))
 		if err != nil {
 			return EpisodeMetadataLoadedMsg{Metadata: nil, Index: idx}
 		}
 
-		m.episodeMetadataCache[cacheKey] = episode
-		return EpisodeMetadataLoadedMsg{Metadata: buildEpisodeMetadataPanel(episode), Index: idx}
+		return EpisodeMetadataLoadedMsg{Metadata: buildEpisodeMetadataPanel(episode), Index: idx, CacheKey: cacheKey, RawEpisode: episode}
 	}
 }
 
@@ -1511,12 +1561,16 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 }
 
 func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID int) tea.Cmd {
+	translationType := m.searchState.TranslationType
+	if translationType == "" {
+		translationType = "sub"
+	}
+	allanimeProvider := m.allanimeProvider
+	aniskipEnabled := m.settingsState.AniskipEnabled
+	quality := m.settingsState.Quality
+
 	return func() tea.Msg {
-		translationType := m.searchState.TranslationType
-		if translationType == "" {
-			translationType = "sub"
-		}
-		m.allanimeProvider.SetTranslation(translationType)
+		allanimeProvider.SetTranslation(translationType)
 
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
 		episode := &source.Episode{
@@ -1527,7 +1581,7 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 			},
 		}
 
-		streams, err := m.allanimeProvider.StreamsOf(episode)
+		streams, err := allanimeProvider.StreamsOf(episode)
 		if err != nil {
 			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err)}
 		}
@@ -1538,14 +1592,13 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 
 		// Fetch AniSkip skip times if enabled and MAL ID is available
 		var skipTimes []aniskip.SkipInterval
-		if m.settingsState.AniskipEnabled && malID > 0 {
+		if aniskipEnabled && malID > 0 {
 			epNum, _ := strconv.Atoi(episodeNum)
 			if times, err := aniskip.GetSkipTimes(malID, epNum); err == nil {
 				skipTimes = times
 			}
 		}
 
-		quality := m.settingsState.Quality
 		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality)
 		if playStream == nil {
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}

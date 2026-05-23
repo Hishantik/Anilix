@@ -3,6 +3,7 @@ package tui
 import (
 	"time"
 
+	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/source"
 )
 
@@ -91,8 +92,10 @@ type EpisodeMetadataFetchTriggered struct {
 
 // EpisodeMetadataLoadedMsg is sent when episode metadata is loaded
 type EpisodeMetadataLoadedMsg struct {
-	Metadata *EpisodeMetadataPanel
-	Index    int
+	Metadata   *EpisodeMetadataPanel
+	Index      int
+	CacheKey   string         `json:"-"` // key to write into episodeMetadataCache
+	RawEpisode *jikan.Episode `json:"-"` // raw episode data for caching
 }
 
 // NewSearchState creates a new search state

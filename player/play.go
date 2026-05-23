@@ -3,6 +3,7 @@ package player
 import (
 	_ "embed"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -166,10 +167,14 @@ func (p *Player) mpvArgs(url string, opts Options) []string {
 func ensureSkipScript() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
+		log.Printf("[anilix] cannot resolve home dir for skip script: %v\n", err)
 		return ""
 	}
 	dir := filepath.Join(home, ".anilix")
-	_ = os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[anilix] failed to create anilix dir: %v\n", err)
+		return ""
+	}
 
 	path := filepath.Join(dir, "ani-skip.lua")
 	if _, err := os.Stat(path); err == nil {
@@ -177,6 +182,7 @@ func ensureSkipScript() string {
 	}
 
 	if err := os.WriteFile(path, []byte(aniSkipLuaScript), 0644); err != nil {
+		log.Printf("[anilix] failed to write skip script: %v\n", err)
 		return ""
 	}
 	return path
@@ -247,24 +253,35 @@ func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
 // mpv-android's scripts directory so it auto-loads on every start.
 func ensureAndroidSkipScript() {
 	dir := "/data/data/is.xyz.mpv/files/scripts"
-	_ = os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[anilix] failed to create mpv scripts dir: %v\n", err)
+		return
+	}
 
 	path := filepath.Join(dir, "anilix-skip.lua")
 	if _, err := os.Stat(path); err == nil {
 		return // already installed
 	}
-	_ = os.WriteFile(path, []byte(aniSkipLuaScript), 0644)
+	if err := os.WriteFile(path, []byte(aniSkipLuaScript), 0644); err != nil {
+		log.Printf("[anilix] failed to write android skip script: %v\n", err)
+		return
+	}
 }
 
 // writeAndroidSkipConfig writes skip times to a config file that the
 // persistent Lua script reads on each file-loaded event.
 func writeAndroidSkipConfig(skipTimes []SkipInterval) {
 	dir := "/data/data/is.xyz.mpv/files"
-	_ = os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[anilix] failed to create mpv config dir: %v\n", err)
+		return
+	}
 
 	path := filepath.Join(dir, "anilix-skip.conf")
 	content := formatSkipOpts(skipTimes)
-	_ = os.WriteFile(path, []byte(content), 0644)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		log.Printf("[anilix] failed to write skip config: %v\n", err)
+	}
 }
 
 func (p *Player) vlcAndroidArgs(url string, opts Options) []string {

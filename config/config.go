@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,9 @@ func setPaths() {
 	configDir := filepath.Join(home, "."+AppName)
 	v.AddConfigPath(configDir)
 
-	_ = os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		log.Printf("[anilix] failed to create config dir: %v\n", err)
+	}
 }
 
 func Get(key string) interface{} {
@@ -85,12 +88,18 @@ func Set(key string, value interface{}) {
 func Save() {
 	home, err := os.UserHomeDir()
 	if err != nil {
+		log.Printf("[anilix] cannot resolve home dir: %v\n", err)
 		return
 	}
 	dir := filepath.Join(home, "."+AppName)
-	_ = os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[anilix] failed to create config dir: %v\n", err)
+		return
+	}
 	path := filepath.Join(dir, AppName+".toml")
-	_ = v.WriteConfigAs(path)
+	if err := v.WriteConfigAs(path); err != nil {
+		log.Printf("[anilix] failed to save config: %v\n", err)
+	}
 }
 
 // HistoryPath returns the path to the history file
