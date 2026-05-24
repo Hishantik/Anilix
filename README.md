@@ -8,6 +8,11 @@
   A cyberpunk-themed terminal anime streaming client written in Go.<br/>
   Search anime, browse episodes, and stream directly from your terminal.
 </p>
+  
+<h2 align="center">Demonstrate</h2>
+
+[Anilix-Demo.mp4](https://gist.github.com/user-attachments/assets/c9fdce3f-dd7c-4a06-a6a1-821ac9bdcf2f.mp4)
+
 
 <p align="center">
   <a href="#features">Features</a> &bull;
