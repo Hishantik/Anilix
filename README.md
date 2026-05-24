@@ -6,13 +6,13 @@
 
 <p align="center">
   A cyberpunk-themed terminal anime streaming client written in Go.<br/>
-  Search anime, browse episodes, and stream directly from your terminal.
+  Search anime, browse episodes, and stream directly from your terminal.<br/>
 </p>
   
 <h2 align="center">Demonstrate</h2>
 
 [Anilix-Demo.mp4](https://gist.github.com/user-attachments/assets/c9fdce3f-dd7c-4a06-a6a1-821ac9bdcf2f.mp4)
-
+---
 
 <p align="center">
   <a href="#features">Features</a> &bull;
@@ -286,3 +286,7 @@ anilix version
 <h2 align="center" id="license">License</h2>
 
 <p align="center">This project is licensed under the <a href="./LICENSE">MIT License</a>.</p>
+
+---
+
+<p align="center">Inspired by <a href="https://github.com/pystardust/ani-cli">ani-cli</a>.</p>
