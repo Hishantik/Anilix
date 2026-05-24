@@ -1,0 +1,325 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="800" viewBox="0 0 800 800"
+     fill="none"
+     xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+
+    <!-- Gradients -->
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="25%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#9d4edd"/>
+      <stop offset="75%" stop-color="#d946ef"/>
+      <stop offset="100%" stop-color="#f43f5e"/>
+    </linearGradient>
+
+    <linearGradient id="grad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="50%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#9d4edd"/>
+    </linearGradient>
+
+    <radialGradient id="nodeGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00d4ff" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#9d4edd" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#00d4ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="30%" stop-color="#6366f1"/>
+      <stop offset="60%" stop-color="#d946ef"/>
+      <stop offset="100%" stop-color="#f43f5e"/>
+    </linearGradient>
+
+    <!-- Filters -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="bigGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="blur" in2="SourceGraphic" operator="over"/>
+    </filter>
+
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#9d4edd" flood-opacity="0.5"/>
+    </filter>
+
+    <!-- Styles -->
+    <style>
+      @keyframes orbit1 { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      @keyframes orbit2 { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+      @keyframes orbit3 { from { transform: rotate(120deg); } to { transform: rotate(480deg); } }
+      @keyframes pulse { 0%,100% { r: 5; opacity: 0.8; } 50% { r: 8; opacity: 1; } }
+      @keyframes pulseSlow { 0%,100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+      @keyframes dash { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -40; } }
+      @keyframes fadeIn { 0% { opacity: 0; } 100% { opacity: 1; } }
+      @keyframes breathe { 0%,100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.15); opacity: 0.9; } }
+      @keyframes shimmer { 0% { stop-color: #00d4ff; } 33% { stop-color: #9d4edd; } 66% { stop-color: #d946ef; } 100% { stop-color: #00d4ff; } }
+      @keyframes titlePulse { 0%,100% { filter: drop-shadow(0 0 6px #00d4ff); } 50% { filter: drop-shadow(0 0 20px #d946ef); } }
+      @keyframes particleFloat {
+        0% { transform: translate(0, 0) scale(1); opacity: 0; }
+        10% { opacity: 0.8; }
+        90% { opacity: 0.8; }
+        100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
+      }
+
+      .orbit1 { transform-origin: 400px 400px; animation: orbit1 20s linear infinite; }
+      .orbit2 { transform-origin: 400px 400px; animation: orbit2 28s linear infinite; }
+      .orbit3 { transform-origin: 400px 400px; animation: orbit3 35s linear infinite; }
+
+      .node-pulse { animation: pulse 3s ease-in-out infinite; }
+      .line-dash { stroke-dasharray: 8 6; animation: dash 3s linear infinite; }
+      .breathe { animation: breathe 4s ease-in-out infinite; }
+      .title-anim { animation: titlePulse 3s ease-in-out infinite; }
+
+      .hover-node { transition: r 0.3s ease, filter 0.3s ease; cursor: pointer; }
+      .hover-node:hover { r: 18; filter: url(#bigGlow); }
+
+      .click-ring { transition: opacity 0.3s ease; cursor: pointer; }
+      .click-ring:hover { opacity: 1 !important; }
+
+      .link { transition: stroke-width 0.2s ease; }
+      .link:hover { stroke-width: 3; }
+
+      .fade-in { animation: fadeIn 2s ease-out forwards; }
+    </style>
+
+  </defs>
+
+  <!-- Background ambient glow -->
+  <circle cx="400" cy="400" r="350" fill="url(#coreGlow)" class="breathe"/>
+
+  <!-- Outer orbit ring 1 -->
+  <g class="orbit1">
+    <ellipse cx="400" cy="400" rx="310" ry="310"
+             stroke="url(#grad)" stroke-width="1.5" opacity="0.25" fill="none"
+             stroke-dasharray="4 8"/>
+  </g>
+
+  <!-- Outer orbit ring 2 -->
+  <g class="orbit2">
+    <ellipse cx="400" cy="400" rx="250" ry="250"
+             stroke="url(#grad2)" stroke-width="1" opacity="0.2" fill="none"
+             stroke-dasharray="6 12"/>
+  </g>
+
+  <!-- Inner orbit ring 3 -->
+  <g class="orbit3">
+    <ellipse cx="400" cy="400" rx="180" ry="180"
+             stroke="url(#grad)" stroke-width="1.5" opacity="0.15" fill="none"/>
+  </g>
+
+  <!-- Connection lines between nodes -->
+  <g class="line-dash" opacity="0.4">
+    <!-- Outer hex connections -->
+    <line x1="400" y1="90"  x2="668" y2="240" stroke="#6366f1" class="link"/>
+    <line x1="668" y1="240" x2="668" y2="560" stroke="#9d4edd" class="link"/>
+    <line x1="668" y1="560" x2="400" y2="710" stroke="#d946ef" class="link"/>
+    <line x1="400" y1="710" x2="132" y2="560" stroke="#f43f5e" class="link"/>
+    <line x1="132" y1="560" x2="132" y2="240" stroke="#d946ef" class="link"/>
+    <line x1="132" y1="240" x2="400" y2="90"  stroke="#9d4edd" class="link"/>
+
+    <!-- Inner hex connections -->
+    <line x1="400" y1="220" x2="556" y2="300" stroke="#00d4ff" class="link"/>
+    <line x1="556" y1="300" x2="556" y2="500" stroke="#6366f1" class="link"/>
+    <line x1="556" y1="500" x2="400" y2="580" stroke="#9d4edd" class="link"/>
+    <line x1="400" y1="580" x2="244" y2="500" stroke="#d946ef" class="link"/>
+    <line x1="244" y1="500" x2="244" y2="300" stroke="#9d4edd" class="link"/>
+    <line x1="244" y1="300" x2="400" y2="220" stroke="#6366f1" class="link"/>
+
+    <!-- Cross connections outer to inner -->
+    <line x1="400" y1="90"  x2="400" y2="220" stroke="#6366f1" opacity="0.3" class="link"/>
+    <line x1="668" y1="240" x2="556" y2="300" stroke="#9d4edd" opacity="0.3" class="link"/>
+    <line x1="668" y1="560" x2="556" y2="500" stroke="#d946ef" opacity="0.3" class="link"/>
+    <line x1="400" y1="710" x2="400" y2="580" stroke="#f43f5e" opacity="0.3" class="link"/>
+    <line x1="132" y1="560" x2="244" y2="500" stroke="#d946ef" opacity="0.3" class="link"/>
+    <line x1="132" y1="240" x2="244" y2="300" stroke="#9d4edd" opacity="0.3" class="link"/>
+
+    <!-- Spoke lines to center -->
+    <line x1="400" y1="220" x2="400" y2="400" stroke="#00d4ff" opacity="0.15"/>
+    <line x1="556" y1="300" x2="400" y2="400" stroke="#00d4ff" opacity="0.15"/>
+    <line x1="556" y1="500" x2="400" y2="400" stroke="#00d4ff" opacity="0.15"/>
+    <line x1="400" y1="580" x2="400" y2="400" stroke="#00d4ff" opacity="0.15"/>
+    <line x1="244" y1="500" x2="400" y2="400" stroke="#00d4ff" opacity="0.15"/>
+    <line x1="244" y1="300" x2="400" y2="400" stroke="#00d4ff" opacity="0.15"/>
+  </g>
+
+  <!-- Outer ring node glow halos -->
+  <g class="breathe" opacity="0.3">
+    <circle cx="400" cy="90"  r="20" fill="url(#nodeGlow)"/>
+    <circle cx="668" cy="240" r="20" fill="url(#nodeGlow)"/>
+    <circle cx="668" cy="560" r="20" fill="url(#nodeGlow)"/>
+    <circle cx="400" cy="710" r="20" fill="url(#nodeGlow)"/>
+    <circle cx="132" cy="560" r="20" fill="url(#nodeGlow)"/>
+    <circle cx="132" cy="240" r="20" fill="url(#nodeGlow)"/>
+  </g>
+
+  <!-- Outer ring nodes (interactive) -->
+  <g filter="url(#glow)">
+    <circle cx="400" cy="90"  r="10" fill="#00d4ff" class="hover-node">
+      <title>Search</title>
+    </circle>
+    <circle cx="668" cy="240" r="10" fill="#6366f1" class="hover-node">
+      <title>Stream</title>
+    </circle>
+    <circle cx="668" cy="560" r="10" fill="#9d4edd" class="hover-node">
+      <title>Extract</title>
+    </circle>
+    <circle cx="400" cy="710" r="10" fill="#d946ef" class="hover-node">
+      <title>Playback</title>
+    </circle>
+    <circle cx="132" cy="560" r="10" fill="#f43f5e" class="hover-node">
+      <title>Cache</title>
+    </circle>
+    <circle cx="132" cy="240" r="10" fill="#d946ef" class="hover-node">
+      <title>Metadata</title>
+    </circle>
+  </g>
+
+  <!-- Inner ring node glow halos -->
+  <g class="breathe" opacity="0.4" style="animation-delay: -2s;">
+    <circle cx="400" cy="220" r="16" fill="url(#nodeGlow)"/>
+    <circle cx="556" cy="300" r="16" fill="url(#nodeGlow)"/>
+    <circle cx="556" cy="500" r="16" fill="url(#nodeGlow)"/>
+    <circle cx="400" cy="580" r="16" fill="url(#nodeGlow)"/>
+    <circle cx="244" cy="500" r="16" fill="url(#nodeGlow)"/>
+    <circle cx="244" cy="300" r="16" fill="url(#nodeGlow)"/>
+  </g>
+
+  <!-- Inner ring nodes (interactive) -->
+  <g filter="url(#glow)">
+    <circle cx="400" cy="220" r="7" fill="#00d4ff" class="hover-node">
+      <title>Results</title>
+    </circle>
+    <circle cx="556" cy="300" r="7" fill="#6366f1" class="hover-node">
+      <title>Resolution</title>
+    </circle>
+    <circle cx="556" cy="500" r="7" fill="#9d4edd" class="hover-node">
+      <title>Proxy</title>
+    </circle>
+    <circle cx="400" cy="580" r="7" fill="#d946ef" class="hover-node">
+      <title>Player</title>
+    </circle>
+    <circle cx="244" cy="500" r="7" fill="#d946ef" class="hover-node">
+      <title>History</title>
+    </circle>
+    <circle cx="244" cy="300" r="7" fill="#6366f1" class="hover-node">
+      <title>Skip</title>
+    </circle>
+  </g>
+
+  <!-- Floating micro-particles -->
+  <g opacity="0.6">
+    <circle cx="320" cy="160" r="3" fill="#00d4ff" class="node-pulse" style="animation-delay: 0s;"/>
+    <circle cx="600" cy="190" r="2.5" fill="#6366f1" class="node-pulse" style="animation-delay: -0.5s;"/>
+    <circle cx="700" cy="400" r="3" fill="#9d4edd" class="node-pulse" style="animation-delay: -1s;"/>
+    <circle cx="580" cy="640" r="2" fill="#d946ef" class="node-pulse" style="animation-delay: -1.5s;"/>
+    <circle cx="350" cy="680" r="3" fill="#f43f5e" class="node-pulse" style="animation-delay: -2s;"/>
+    <circle cx="160" cy="480" r="2.5" fill="#d946ef" class="node-pulse" style="animation-delay: -2.5s;"/>
+    <circle cx="200" cy="170" r="2" fill="#9d4edd" class="node-pulse" style="animation-delay: -0.8s;"/>
+    <circle cx="500" cy="130" r="2" fill="#00d4ff" class="node-pulse" style="animation-delay: -1.2s;"/>
+    <circle cx="680" cy="350" r="2.5" fill="#6366f1" class="node-pulse" style="animation-delay: -1.8s;"/>
+    <circle cx="480" cy="700" r="2" fill="#f43f5e" class="node-pulse" style="animation-delay: -0.3s;"/>
+    <circle cx="100" cy="380" r="3" fill="#00d4ff" class="node-pulse" style="animation-delay: -2.2s;"/>
+    <circle cx="260" cy="130" r="2" fill="#6366f1" class="node-pulse" style="animation-delay: -1.7s;"/>
+    <circle cx="540" cy="670" r="2.5" fill="#9d4edd" class="node-pulse" style="animation-delay: -0.6s;"/>
+    <circle cx="720" cy="520" r="2" fill="#d946ef" class="node-pulse" style="animation-delay: -2.8s;"/>
+    <circle cx="150" cy="600" r="2" fill="#f43f5e" class="node-pulse" style="animation-delay: -1.1s;"/>
+    <circle cx="650" cy="140" r="3" fill="#00d4ff" class="node-pulse" style="animation-delay: -0.4s;"/>
+  </g>
+
+  <!-- Center core glow ring -->
+  <circle cx="400" cy="400" r="95" fill="none" stroke="url(#grad)" stroke-width="2" opacity="0.3" class="breathe"/>
+  <circle cx="400" cy="400" r="80" fill="none" stroke="url(#grad)" stroke-width="1" opacity="0.15" class="breathe" style="animation-delay: -1s;"/>
+
+  <!-- Title -->
+  <g class="title-anim" filter="url(#shadow)">
+    <text x="400" y="390"
+          text-anchor="middle"
+          font-family="'Segoe UI', 'SF Pro Display', Arial, Helvetica, sans-serif"
+          font-size="72"
+          font-weight="900"
+          letter-spacing="8"
+          fill="url(#textGrad)">
+      ANILIX
+    </text>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="400" y="430"
+        text-anchor="middle"
+        font-family="'Segoe UI', 'SF Pro Display', Arial, Helvetica, sans-serif"
+        font-size="16"
+        font-weight="400"
+        letter-spacing="6"
+        fill="#9d4edd"
+        opacity="0.8">
+    TERMINAL ANIME STREAMER
+  </text>
+
+  <!-- Outer ring node labels -->
+  <g font-family="'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1" opacity="0.7">
+    <text x="400" y="70"  text-anchor="middle" fill="#00d4ff">SEARCH</text>
+    <text x="695" y="235" text-anchor="start" fill="#6366f1">STREAM</text>
+    <text x="695" y="570" text-anchor="start" fill="#9d4edd">EXTRACT</text>
+    <text x="400" y="740" text-anchor="middle" fill="#d946ef">PLAYBACK</text>
+    <text x="105" y="570" text-anchor="end" fill="#f43f5e">CACHE</text>
+    <text x="105" y="235" text-anchor="end" fill="#d946ef">METADATA</text>
+  </g>
+
+  <!-- Interactive hover rings on outer nodes -->
+  <g>
+    <circle cx="400" cy="90"  r="18" fill="none" stroke="#00d4ff" stroke-width="1.5" opacity="0" class="click-ring">
+      <title>Search anime across providers</title>
+      <animate attributeName="opacity" values="0;0;0" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="668" cy="240" r="18" fill="none" stroke="#6366f1" stroke-width="1.5" opacity="0" class="click-ring">
+      <title>Multi-source stream resolution</title>
+    </circle>
+    <circle cx="668" cy="560" r="18" fill="none" stroke="#9d4edd" stroke-width="1.5" opacity="0" class="click-ring">
+      <title>Multi-host stream extraction</title>
+    </circle>
+    <circle cx="400" cy="710" r="18" fill="none" stroke="#d946ef" stroke-width="1.5" opacity="0" class="click-ring">
+      <title>mpv / vlc / iina playback</title>
+    </circle>
+    <circle cx="132" cy="560" r="18" fill="none" stroke="#f43f5e" stroke-width="1.5" opacity="0" class="click-ring">
+      <title>SQLite-backed ID caching</title>
+    </circle>
+    <circle cx="132" cy="240" r="18" fill="none" stroke="#d946ef" stroke-width="1.5" opacity="0" class="click-ring">
+      <title>AniList + Jikan metadata</title>
+    </circle>
+  </g>
+
+  <!-- Corner decorative elements -->
+  <g opacity="0.15">
+    <line x1="30" y1="30" x2="80" y2="30" stroke="#00d4ff" stroke-width="1"/>
+    <line x1="30" y1="30" x2="30" y2="80" stroke="#00d4ff" stroke-width="1"/>
+    <line x1="770" y1="30" x2="720" y2="30" stroke="#f43f5e" stroke-width="1"/>
+    <line x1="770" y1="30" x2="770" y2="80" stroke="#f43f5e" stroke-width="1"/>
+    <line x1="30" y1="770" x2="80" y2="770" stroke="#9d4edd" stroke-width="1"/>
+    <line x1="30" y1="770" x2="30" y2="720" stroke="#9d4edd" stroke-width="1"/>
+    <line x1="770" y1="770" x2="720" y2="770" stroke="#d946ef" stroke-width="1"/>
+    <line x1="770" y1="770" x2="770" y2="720" stroke="#d946ef" stroke-width="1"/>
+  </g>
+
+</svg>
