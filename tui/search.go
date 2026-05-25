@@ -432,6 +432,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if meta, ok := m.metadataCache[m.searchList.Index()]; ok {
 					m.searchState.Metadata = meta
 					m.searchState.MetadataLoading = false
+					// Trigger cover download if not already loaded
+					if meta.Cover != "" && meta.CoverImage == "" {
+						leftW, _, _, _ := detailLayout(m.width, m.height)
+						cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchList.Index()))
+					}
 				} else {
 					// Not cached (AniList batch may not have covered this one) — fetch individually
 					m.searchState.MetadataLoading = true
@@ -534,6 +539,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Show metadata for the currently selected item
 		if meta, ok := m.metadataCache[m.searchState.Selected]; ok {
 			m.searchState.Metadata = meta
+			// Trigger cover image download for the selected item
+			if meta.Cover != "" && meta.CoverImage == "" {
+				leftW, _, _, _ := detailLayout(m.width, m.height)
+				cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchState.Selected))
+			}
 		}
 
 	case metadataDebounceMsg:
@@ -542,6 +552,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if meta, ok := m.metadataCache[msg.Index]; ok {
 				m.searchState.Metadata = meta
 				m.searchState.MetadataLoading = false
+				// Trigger cover download if not already loaded
+				if meta.Cover != "" && meta.CoverImage == "" {
+					leftW, _, _, _ := detailLayout(m.width, m.height)
+					cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, msg.Index))
+				}
 			}
 			// If not in cache, batch already failed or ID wasn't available
 		}
@@ -552,6 +567,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchState.Metadata = msg.Metadata
 			m.searchState.MetadataLoading = false
 			m.progressTarget = 1.0
+			// Trigger cover image download
+			if msg.Metadata != nil && msg.Metadata.Cover != "" && msg.Metadata.CoverImage == "" {
+				leftW, _, _, _ := detailLayout(m.width, m.height)
+				cmds = append(cmds, downloadCoverCmd(msg.Metadata.Cover, leftW, msg.Index))
+			}
 		}
 
 	case EpisodesLoadedMsg:
@@ -585,6 +605,18 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Index == m.episodeState.Selected {
 			m.episodeState.EpisodeMetadata = msg.Metadata
 			m.episodeState.MetadataLoading = false
+		}
+
+	case CoverImageLoadedMsg:
+		if msg.Rendered != "" {
+			// Update the cached metadata with the rendered cover
+			if meta, ok := m.metadataCache[msg.Index]; ok {
+				meta.CoverImage = msg.Rendered
+			}
+			// Also update current metadata if it's the selected item
+			if m.searchState.Metadata != nil && msg.Index == m.searchState.Selected {
+				m.searchState.Metadata.CoverImage = msg.Rendered
+			}
 		}
 
 	case PlayStreamMsg:

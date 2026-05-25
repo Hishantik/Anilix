@@ -60,3 +60,9 @@ type TUIErrorMsg struct {
 }
 
 type progressTickMsg struct{}
+
+// CoverImageLoadedMsg is sent when a cover image has been downloaded and rendered.
+type CoverImageLoadedMsg struct {
+	Rendered string // ANSI half-block rendered image
+	Index    int    // Result index this cover belongs to
+}

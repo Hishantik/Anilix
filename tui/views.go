@@ -276,8 +276,12 @@ func detailLayout(totalWidth, totalHeight int) (leftW, rightW, availableH int, i
 func (m *SearchModel) renderDetailLeftPanel(meta *MetadataPanel, width int) string {
 	var sections []string
 
-	// Cover placeholder
-	sections = append(sections, coverPlaceholder(meta.Title, width))
+	// Cover image or placeholder
+	if meta.CoverImage != "" {
+		sections = append(sections, meta.CoverImage)
+	} else {
+		sections = append(sections, coverPlaceholder(meta.Title, width))
+	}
 
 	// Score badge
 	if meta.Score > 0 {

@@ -38,6 +38,7 @@ type MetadataPanel struct {
 	TitleEnglish string
 	TitleNative  string
 	Cover        string
+	CoverImage   string // Rendered ANSI cover art (half-block), empty if not available
 	Year         int
 	Type         string
 	Status       string
