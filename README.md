@@ -135,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/hishantik/anilix/main/install.sh | 
 <div align="center">
 
 ```powershell
-curl -fsSL https://raw.githubusercontent.com/hishantik/anilix/main/install.bat -o install.bat && .\install.bat
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/hishantik/anilix/main/install.bat" -OutFile "install.bat"; .\install.bat
 ```
 
 </div>
