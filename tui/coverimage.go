@@ -10,7 +10,7 @@ import (
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,13 +192,41 @@ func RenderCoverImage(img image.Image, maxWidth int, protocol Protocol, cachePat
 }
 
 // renderKittyCover renders an image using the Kitty graphics protocol.
+// The Kitty protocol only supports PNG (f=100), RGB (f=24), and RGBA (f=32).
+// Non-PNG images must be decoded and re-encoded as PNG before transmission.
 func renderKittyCover(path string, width int) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
+	lowerPath := strings.ToLower(path)
+	isPNG := strings.HasSuffix(lowerPath, ".png")
+
+	var pngData []byte
+	if isPNG {
+		// PNG can be sent directly
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		pngData = data
+	} else {
+		// Decode any format (JPEG, GIF, etc.) and re-encode as PNG
+		f, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+
+		img, _, err := image.Decode(f)
+		if err != nil {
+			return "", err
+		}
+
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return "", err
+		}
+		pngData = buf.Bytes()
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(data)
+	b64 := base64.StdEncoding.EncodeToString(pngData)
 	chunks := splitBase64(b64, 4096)
 
 	var result strings.Builder
