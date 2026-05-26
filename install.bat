@@ -79,33 +79,12 @@ echo %C_BLUE%[info]%C_RESET% Installing !VERSION! for windows/amd64...
 set "TMPDIR=%TEMP%\anilix_install_%RANDOM%"
 mkdir "%TMPDIR%" 2>nul
 
-:: Download with purple progress bar
+:: Download with curl progress bar
 set "ARCHIVE=anilix_windows_amd64.zip"
 set "URL=%BASE_URL%/!VERSION!/%ARCHIVE%"
 echo %C_BLUE%[info]%C_RESET% Downloading !URL!...
 
-powershell -NoProfile -Command ^
-    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ^
-    $esc = [char]27; ^
-    $purple = $esc + '[38;2;157;78;221m'; ^
-    $reset = $esc + '[0m'; ^
-    $url = '!URL!'; ^
-    $out = '!TMPDIR!\!ARCHIVE!'; ^
-    $wc = New-Object System.Net.WebClient; ^
-    $wc.add_DownloadProgressChanged({ ^
-        $pct = $_.ProgressPercentage; ^
-        $width = 50; ^
-        $on = [math]::Floor($pct * $width / 100); ^
-        $off = $width - $on; ^
-        $bar = ([string][char]0x25A0) * $on + ([string][char]0x256E) * $off; ^
-        Write-Host -NoNewline (`$purple + $bar + ' ' + ('{0,3}' -f $pct) + '%' + $reset + \"`r\"); ^
-    }); ^
-    $wc.add_DownloadFileCompleted({ ^
-        Write-Host -NoNewline (`$purple + ([string][char]0x25A0) * 50 + ' 100%' + $reset); ^
-        Write-Host ''; ^
-    }); ^
-    $wc.DownloadFileAsync([uri]$url, $out); ^
-    while ($wc.IsBusy) { Start-Sleep -Milliseconds 100 }"
+curl -fSL --progress-bar -o "!TMPDIR!\!ARCHIVE!" "!URL!"
 
 if errorlevel 1 (
     echo %C_RED%[error]%C_RESET% Download failed. Check if version !VERSION! exists.
