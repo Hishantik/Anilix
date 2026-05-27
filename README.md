@@ -37,6 +37,7 @@
 | **Sub/Dub Toggle** — Switch between subtitled and dubbed versions with `Ctrl+T` | **Auto-Skip Intro/Outro** — Automatically skips intros and outros with mpv Lua script for seamless seeking |
 | **Recent Searches** — Persists your last 10 searches for quick access | **Multi-host Extraction** — Extracts direct streams from multiple hosts with automatic fallback |
 | **Android Proxy** — Local HTTP proxy bridges Android apps and PRoot/Termux for seamless stream playback on mobile | **Persistent Caching** — SQLite-backed ID mapping for fast repeated lookups |
+| **AniList Tracking** — OAuth2 login to sync watch progress and status with your AniList account, connect/disconnect from the TUI settings menu | **Cover Art** — Renders anime cover images directly in the terminal using Kitty graphics or half-block Unicode placeholders |
 
 </div>
 
@@ -208,6 +209,8 @@ anilix tui
 
 ```sh
 anilix version
+anilix anilist login    # Login to AniList via browser
+anilix anilist logout   # Logout from AniList
 ```
 
 </div>
@@ -253,6 +256,16 @@ anilix version
     <td align="center"><code>aniskip.enabled</code></td>
     <td align="center"><code>true</code></td>
     <td align="center">Auto-skip intros/outros</td>
+  </tr>
+  <tr>
+    <td align="center"><code>anilist.token</code></td>
+    <td align="center"><em>(empty)</em></td>
+    <td align="center">AniList OAuth token (managed automatically via TUI or <code>anilist login</code>)</td>
+  </tr>
+  <tr>
+    <td align="center"><code>anilist.username</code></td>
+    <td align="center"><em>(empty)</em></td>
+    <td align="center">AniList username (set after login)</td>
   </tr>
 </table>
 
