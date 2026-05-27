@@ -3,19 +3,18 @@ package tui
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"image"
-	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
-	"image/png"
+	_ "image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	termimg "github.com/blacktop/go-termimg"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -23,12 +22,9 @@ import (
 type Protocol int
 
 const (
-	ProtocolNone     Protocol = iota // No image protocol available
-	ProtocolKitty                    // Kitty graphics protocol (kitty, ghostty)
-	ProtocolITerm2                   // iTerm2 inline images (iTerm2, WezTerm, Rio)
-	ProtocolSixel                    // Sixel graphics (foot, mlterm, xterm+sixel)
-	ProtocolChafa                    // chafa unicode art (universal fallback)
-	ProtocolHalfBlock                // ANSI half-block characters (universal fallback)
+	ProtocolNone      Protocol = iota // No image protocol available
+	ProtocolHalfBlock                 // ANSI half-block characters via go-termimg/mosaic
+	ProtocolChafa                     // chafa unicode art (universal fallback)
 )
 
 // currentProtocol caches the detected protocol for the session.
@@ -36,36 +32,20 @@ var currentProtocol Protocol = ProtocolNone
 var protocolDetected bool
 
 // DetectTerminalProtocol returns the best image protocol for the current terminal.
+//
+// Bubbletea v2's ultraviolet cell-based renderer strips all zero-width escape
+// sequences (APC, OSC, DCS) from view.Content. Only pure SGR text survives —
+// so we use go-termimg's half-block renderer (via charmbracelet/x/mosaic)
+// which produces ANSI color text that the cell buffer can represent.
 func DetectTerminalProtocol() Protocol {
 	if protocolDetected {
 		return currentProtocol
 	}
 	protocolDetected = true
 
-	termProgram := strings.ToLower(os.Getenv("TERM_PROGRAM"))
-	term := strings.ToLower(os.Getenv("TERM"))
-
-	// Kitty protocol: kitty, ghostty
-	if os.Getenv("KITTY_WINDOW_ID") != "" || termProgram == "kitty" || termProgram == "ghostty" {
-		currentProtocol = ProtocolKitty
-		return currentProtocol
-	}
-
-	// iTerm2 protocol: iTerm.app, WezTerm, Rio
-	if termProgram == "iterm.app" || termProgram == "wezterm" || termProgram == "rio" {
-		currentProtocol = ProtocolITerm2
-		return currentProtocol
-	}
-
-	// Sixel: foot, mlterm, or TERM containing "sixel"
-	if strings.Contains(term, "sixel") || strings.Contains(termProgram, "mlterm") || strings.Contains(termProgram, "foot") {
-		currentProtocol = ProtocolSixel
-		return currentProtocol
-	}
-
-	// Detect sixel via infocmp
-	if detectSixelSupport() {
-		currentProtocol = ProtocolSixel
+	// Half-block via go-termimg (mosaic) — works everywhere with truecolor
+	if DetectTrueColorSupport() {
+		currentProtocol = ProtocolHalfBlock
 		return currentProtocol
 	}
 
@@ -75,27 +55,8 @@ func DetectTerminalProtocol() Protocol {
 		return currentProtocol
 	}
 
-	// Half-block works everywhere with truecolor support
-	if DetectTrueColorSupport() {
-		currentProtocol = ProtocolHalfBlock
-		return currentProtocol
-	}
-
 	currentProtocol = ProtocolNone
 	return currentProtocol
-}
-
-func detectSixelSupport() bool {
-	term := os.Getenv("TERM")
-	if term == "" || term == "dumb" {
-		return false
-	}
-	out, err := exec.Command("infocmp", "-1", term).Output()
-	if err != nil {
-		return false
-	}
-	s := strings.ToLower(string(out))
-	return strings.Contains(s, "sixel")
 }
 
 func hasBinary(name string) bool {
@@ -163,126 +124,45 @@ func DownloadCoverImage(url string) (image.Image, string, error) {
 }
 
 // RenderCoverImage renders an image for the terminal, using the best available protocol.
-// It takes the decoded image, max width, detected protocol, and the cache file path.
 func RenderCoverImage(img image.Image, maxWidth int, protocol Protocol, cachePath string) string {
-	// Try protocol-specific renderers that need a file
-	if cachePath != "" {
-		switch protocol {
-		case ProtocolKitty:
-			if result, err := renderKittyCover(cachePath, maxWidth); err == nil && result != "" {
-				return result
-			}
-		case ProtocolITerm2:
-			if result, err := renderITerm2Cover(cachePath, maxWidth); err == nil && result != "" {
-				return result
-			}
-		case ProtocolSixel:
-			if result, err := renderSixelCover(cachePath, maxWidth); err == nil && result != "" {
-				return result
-			}
-		case ProtocolChafa:
+	switch protocol {
+	case ProtocolHalfBlock:
+		return renderGoTermimg(img, maxWidth)
+	case ProtocolChafa:
+		if cachePath != "" {
 			if result, err := renderChafaCover(cachePath, maxWidth); err == nil && result != "" {
 				return result
 			}
 		}
+		// Fall through to half-block if chafa fails
+		return renderGoTermimg(img, maxWidth)
 	}
 
-	// Fallback: ANSI half-block renderer
-	return renderHalfBlock(img, maxWidth)
+	return renderGoTermimg(img, maxWidth)
 }
 
-// renderKittyCover renders an image using the Kitty graphics protocol.
-// The Kitty protocol only supports PNG (f=100), RGB (f=24), and RGBA (f=32).
-// Non-PNG images must be decoded and re-encoded as PNG before transmission.
-func renderKittyCover(path string, width int) (string, error) {
-	lowerPath := strings.ToLower(path)
-	isPNG := strings.HasSuffix(lowerPath, ".png")
-
-	var pngData []byte
-	if isPNG {
-		// PNG can be sent directly
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
-		}
-		pngData = data
-	} else {
-		// Decode any format (JPEG, GIF, etc.) and re-encode as PNG
-		f, err := os.Open(path)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-
-		img, _, err := image.Decode(f)
-		if err != nil {
-			return "", err
-		}
-
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, img); err != nil {
-			return "", err
-		}
-		pngData = buf.Bytes()
+// renderGoTermimg renders an image using go-termimg's half-block renderer
+// (backed by charmbracelet/x/mosaic). Produces pure ANSI SGR text that
+// survives bubbletea v2's ultraviolet cell buffer.
+func renderGoTermimg(img image.Image, maxWidth int) string {
+	maxHeight := maxWidth * 2
+	if maxHeight > 30 {
+		maxHeight = 30
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(pngData)
-	chunks := splitBase64(b64, 4096)
+	ti := termimg.New(img).
+		Protocol(termimg.Halfblocks).
+		Width(maxWidth).
+		Height(maxHeight).
+		Scale(termimg.ScaleFit)
 
-	var result strings.Builder
-	// Approximate height from width (cover art ~3:2 aspect)
-	height := width * 2
-
-	for i, chunk := range chunks {
-		more := 0
-		if i < len(chunks)-1 {
-			more = 1
-		}
-		if i == 0 {
-			fmt.Fprintf(&result, "\033_Ga=T,f=100,c=%d,r=%d,m=%d;%s\033\\", width, height, more, chunk)
-		} else {
-			fmt.Fprintf(&result, "\033_Gm=%d;%s\033\\", more, chunk)
-		}
-	}
-
-	return result.String(), nil
-}
-
-// renderITerm2Cover renders an image using the iTerm2 inline image protocol.
-func renderITerm2Cover(path string, width int) (string, error) {
-	data, err := os.ReadFile(path)
+	output, err := ti.Render()
 	if err != nil {
-		return "", err
+		// Ultimate fallback: manual half-block
+		return renderHalfBlock(img, maxWidth)
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(data)
-	pixelWidth := width * 8
-
-	return fmt.Sprintf("\033]1337;File=size=%d;width=%dpx;inline=1:%s\a",
-		len(data), pixelWidth, b64), nil
-}
-
-// renderSixelCover renders an image in Sixel format.
-func renderSixelCover(path string, width int) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	img, _, err := image.Decode(f)
-	if err != nil {
-		return "", err
-	}
-
-	pixelW := width * 8
-	pixelH := pixelW * 2
-	if pixelW <= 0 {
-		pixelW = 200
-	}
-
-	resized := resizeForSixel(img, pixelW, pixelH)
-	return encodeSixel(resized, pixelW, pixelH)
+	return output
 }
 
 // renderChafaCover renders an image as unicode art using the chafa binary.
@@ -314,121 +194,6 @@ func renderChafaCover(path string, width int) (string, error) {
 	return result, nil
 }
 
-// resizeForSixel resizes an image using nearest-neighbor scaling.
-func resizeForSixel(src image.Image, w, h int) *image.RGBA {
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	xdraw.NearestNeighbor.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
-	return dst
-}
-
-// encodeSixel encodes an RGBA image as a sixel string.
-func encodeSixel(img *image.RGBA, w, h int) (string, error) {
-	var buf bytes.Buffer
-	buf.WriteString("\033Pq")
-
-	palette := buildSixelPalette()
-
-	for i, c := range palette {
-		r, g, b, _ := c.RGBA()
-		buf.WriteString(fmt.Sprintf("#%d;2;%d;%d;%d;",
-			i, int(r*100/65535), int(g*100/65535), int(b*100/65535)))
-	}
-
-	sixRows := (h + 5) / 6
-	for sy := 0; sy < sixRows; sy++ {
-		for ci, c := range palette {
-			buf.WriteString(fmt.Sprintf("#%d", ci))
-			var run byte
-			count := 0
-
-			for x := 0; x < w; x++ {
-				var bits byte
-				for dy := 0; dy < 6; dy++ {
-					py := sy*6 + dy
-					if py < h {
-						r, g, b, _ := img.At(x, py).RGBA()
-						cr, cg, cb, _ := c.RGBA()
-						if sixelColorMatch(r, cr) && sixelColorMatch(g, cg) && sixelColorMatch(b, cb) {
-							bits |= 1 << uint(dy)
-						}
-					}
-				}
-				bits += 63
-
-				if count == 0 {
-					run = bits
-					count = 1
-				} else if bits == run {
-					count++
-				} else {
-					writeSixelRun(&buf, run, count)
-					run = bits
-					count = 1
-				}
-			}
-			if count > 0 {
-				writeSixelRun(&buf, run, count)
-			}
-			buf.WriteString("$")
-		}
-		buf.WriteString("-")
-	}
-
-	buf.WriteString("\033\\")
-	return buf.String(), nil
-}
-
-func writeSixelRun(buf *bytes.Buffer, char byte, count int) {
-	if count <= 2 {
-		for i := 0; i < count; i++ {
-			buf.WriteByte(char)
-		}
-	} else {
-		buf.WriteString(fmt.Sprintf("!%d%c", count, char))
-	}
-}
-
-func buildSixelPalette() []color.RGBA {
-	var palette []color.RGBA
-	for r := 0; r < 6; r++ {
-		for g := 0; g < 6; g++ {
-			for b := 0; b < 6; b++ {
-				palette = append(palette, color.RGBA{
-					R: uint8(r * 51), G: uint8(g * 51), B: uint8(b * 51), A: 255,
-				})
-			}
-		}
-	}
-	return palette
-}
-
-func sixelColorMatch(a, b uint32) bool {
-	diff := a - b
-	if b > a {
-		diff = b - a
-	}
-	return diff < 16000
-}
-
-func splitBase64(s string, n int) []string {
-	if n <= 0 {
-		return []string{s}
-	}
-	var chunks []string
-	for len(s) > 0 {
-		end := n
-		if end > len(s) {
-			end = len(s)
-		}
-		chunks = append(chunks, s[:end])
-		s = s[end:]
-	}
-	if len(chunks) == 0 {
-		chunks = []string{""}
-	}
-	return chunks
-}
-
 // ResizeImage resizes an image to fit within maxWidth x maxHeight while
 // preserving aspect ratio, using high-quality BiLinear scaling.
 func ResizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
@@ -457,8 +222,8 @@ func ResizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
 	return dst
 }
 
-// renderHalfBlock renders an image as ANSI-colored half-block characters.
-// Each terminal row uses the ▀ character to display two vertical pixels.
+// renderHalfBlock is the ultimate fallback — manual half-block rendering
+// without any external dependencies.
 func renderHalfBlock(img image.Image, maxWidth int) string {
 	maxRows := maxWidth * 2
 	if maxRows > 30 {
