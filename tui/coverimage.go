@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	termimg "github.com/blacktop/go-termimg"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -23,7 +22,8 @@ type Protocol int
 
 const (
 	ProtocolNone      Protocol = iota // No image protocol available
-	ProtocolHalfBlock                 // ANSI half-block characters via go-termimg/mosaic
+	ProtocolKitty                     // Kitty graphics protocol via Unicode placeholders
+	ProtocolHalfBlock                 // ANSI half-block characters (SGR, works everywhere)
 	ProtocolChafa                     // chafa unicode art (universal fallback)
 )
 
@@ -33,17 +33,23 @@ var protocolDetected bool
 
 // DetectTerminalProtocol returns the best image protocol for the current terminal.
 //
-// Bubbletea v2's ultraviolet cell-based renderer strips all zero-width escape
-// sequences (APC, OSC, DCS) from view.Content. Only pure SGR text survives —
-// so we use go-termimg's half-block renderer (via charmbracelet/x/mosaic)
-// which produces ANSI color text that the cell buffer can represent.
+// Kitty graphics uses Unicode placeholders (\U0010EEEE + combining marks) that
+// survive Bubbletea v2's ultraviolet cell buffer. The image data is transmitted
+// via APC sequences using tea.Raw(), which bypasses the renderer entirely.
 func DetectTerminalProtocol() Protocol {
 	if protocolDetected {
 		return currentProtocol
 	}
 	protocolDetected = true
 
-	// Half-block via go-termimg (mosaic) — works everywhere with truecolor
+	// Kitty graphics via Unicode placeholders — best quality, works with
+	// Bubbletea v2 because placeholders are text, not zero-width escapes.
+	if DetectKittySupport() {
+		currentProtocol = ProtocolKitty
+		return currentProtocol
+	}
+
+	// Half-block: SGR colors + ▀ character — works everywhere with truecolor
 	if DetectTrueColorSupport() {
 		currentProtocol = ProtocolHalfBlock
 		return currentProtocol
@@ -59,9 +65,20 @@ func DetectTerminalProtocol() Protocol {
 	return currentProtocol
 }
 
-func hasBinary(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
+// DetectKittySupport checks if the terminal supports Kitty graphics protocol.
+func DetectKittySupport() bool {
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		return true
+	}
+	termProg := strings.ToLower(os.Getenv("TERM_PROGRAM"))
+	if termProg == "kitty" || termProg == "ghostty" {
+		return true
+	}
+	term := strings.ToLower(os.Getenv("TERM"))
+	if strings.Contains(term, "kitty") || strings.Contains(term, "ghostty") {
+		return true
+	}
+	return false
 }
 
 // DetectTrueColorSupport checks if the terminal supports 24-bit color.
@@ -76,6 +93,11 @@ func DetectTrueColorSupport() bool {
 		return false
 	}
 	return true
+}
+
+func hasBinary(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 // coverCachePath returns the cache file path for a cover image URL.
@@ -124,10 +146,14 @@ func DownloadCoverImage(url string) (image.Image, string, error) {
 }
 
 // RenderCoverImage renders an image for the terminal, using the best available protocol.
-func RenderCoverImage(img image.Image, maxWidth int, protocol Protocol, cachePath string) string {
+// For Kitty protocol, returns the placeholder text (transmit seq is sent separately).
+// maxRows limits the image height (0 = use protocol default).
+func RenderCoverImage(img image.Image, maxWidth int, protocol Protocol, cachePath string, maxRows int) string {
 	switch protocol {
+	case ProtocolKitty:
+		return renderKittyCover(img, maxWidth, maxRows).Placeholder
 	case ProtocolHalfBlock:
-		return renderGoTermimg(img, maxWidth)
+		return renderHalfBlock(img, maxWidth, maxRows)
 	case ProtocolChafa:
 		if cachePath != "" {
 			if result, err := renderChafaCover(cachePath, maxWidth); err == nil && result != "" {
@@ -135,34 +161,64 @@ func RenderCoverImage(img image.Image, maxWidth int, protocol Protocol, cachePat
 			}
 		}
 		// Fall through to half-block if chafa fails
-		return renderGoTermimg(img, maxWidth)
+		return renderHalfBlock(img, maxWidth, maxRows)
 	}
-
-	return renderGoTermimg(img, maxWidth)
+	return ""
 }
 
-// renderGoTermimg renders an image using go-termimg's half-block renderer
-// (backed by charmbracelet/x/mosaic). Produces pure ANSI SGR text that
-// survives bubbletea v2's ultraviolet cell buffer.
-func renderGoTermimg(img image.Image, maxWidth int) string {
-	maxHeight := maxWidth * 2
-	if maxHeight > 30 {
-		maxHeight = 30
+// RenderCoverImageKitty renders an image using Kitty protocol and returns the
+// full result including the APC transmit sequence. For non-Kitty protocols,
+// the TransmitSeq will be empty.
+func RenderCoverImageKitty(img image.Image, maxWidth int, protocol Protocol, cachePath string, maxRows int) KittyRenderResult {
+	if protocol == ProtocolKitty {
+		return renderKittyCover(img, maxWidth, maxRows)
+	}
+	// For non-Kitty protocols, fall back to regular rendering
+	return KittyRenderResult{
+		Placeholder: RenderCoverImage(img, maxWidth, protocol, cachePath, maxRows),
+	}
+}
+
+// renderKittyCover renders an image using Kitty graphics protocol with
+// Unicode placeholders. The image is transmitted at high pixel resolution
+// and the terminal's GPU scales it to fit the cell area, giving a crystal
+// clear result.
+func renderKittyCover(img image.Image, maxWidth int, maxRows int) KittyRenderResult {
+	// Cell area: how many terminal cells the image occupies
+	cols := maxWidth / 3
+	if cols < 20 {
+		cols = 20
+	}
+	if cols > 50 {
+		cols = 50
+	}
+	rows := cols * 3 / 2 // ~2:3 aspect ratio for cover art
+	if maxRows > 0 && rows > maxRows {
+		rows = maxRows
 	}
 
-	ti := termimg.New(img).
-		Protocol(termimg.Halfblocks).
-		Width(maxWidth).
-		Height(maxHeight).
-		Scale(termimg.ScaleFit)
-
-	output, err := ti.Render()
-	if err != nil {
-		// Ultimate fallback: manual half-block
-		return renderHalfBlock(img, maxWidth)
+	// Pixel resolution: transmit at high res, terminal GPU scales to cell area.
+	// Use the original image resolution (capped) for maximum clarity.
+	bounds := img.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	pixelW := srcW
+	pixelH := srcH
+	const maxPixel = 1200
+	if srcW > maxPixel || srcH > maxPixel {
+		ratio := float64(maxPixel) / float64(max(srcW, srcH))
+		pixelW = int(float64(srcW) * ratio)
+		pixelH = int(float64(srcH) * ratio)
 	}
+	if pixelW < 1 {
+		pixelW = 1
+	}
+	if pixelH < 1 {
+		pixelH = 1
+	}
+	resized := ResizeImage(img, pixelW, pixelH)
 
-	return output
+	return RenderKittyCover(resized, cols, rows)
 }
 
 // renderChafaCover renders an image as unicode art using the chafa binary.
@@ -194,38 +250,13 @@ func renderChafaCover(path string, width int) (string, error) {
 	return result, nil
 }
 
-// ResizeImage resizes an image to fit within maxWidth x maxHeight while
-// preserving aspect ratio, using high-quality BiLinear scaling.
-func ResizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	bounds := img.Bounds()
-	srcW := bounds.Dx()
-	srcH := bounds.Dy()
-
-	ratioW := float64(maxWidth) / float64(srcW)
-	ratioH := float64(maxHeight) / float64(srcH)
-	ratio := ratioW
-	if ratioH < ratioW {
-		ratio = ratioH
+// renderHalfBlock renders an image as ANSI-colored half-block characters.
+// Each terminal row uses the ▀ character to display two vertical pixels,
+// producing pure SGR text that survives Bubbletea v2's ultraviolet cell buffer.
+func renderHalfBlock(img image.Image, maxWidth int, maxRows int) string {
+	if maxRows <= 0 {
+		maxRows = maxWidth * 2
 	}
-
-	targetW := int(float64(srcW) * ratio)
-	targetH := int(float64(srcH) * ratio)
-	if targetW < 1 {
-		targetW = 1
-	}
-	if targetH < 1 {
-		targetH = 1
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
-	xdraw.BiLinear.Scale(dst, dst.Bounds(), img, bounds, xdraw.Over, nil)
-	return dst
-}
-
-// renderHalfBlock is the ultimate fallback — manual half-block rendering
-// without any external dependencies.
-func renderHalfBlock(img image.Image, maxWidth int) string {
-	maxRows := maxWidth * 2
 	if maxRows > 30 {
 		maxRows = 30
 	}
@@ -256,6 +287,34 @@ func renderHalfBlock(img image.Image, maxWidth int) string {
 	}
 	sb.WriteString("\033[0m")
 	return sb.String()
+}
+
+// ResizeImage resizes an image to fit within maxWidth x maxHeight while
+// preserving aspect ratio, using high-quality CatmullRom scaling.
+func ResizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
+	bounds := img.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+
+	ratioW := float64(maxWidth) / float64(srcW)
+	ratioH := float64(maxHeight) / float64(srcH)
+	ratio := ratioW
+	if ratioH < ratioW {
+		ratio = ratioH
+	}
+
+	targetW := int(float64(srcW) * ratio)
+	targetH := int(float64(srcH) * ratio)
+	if targetW < 1 {
+		targetW = 1
+	}
+	if targetH < 1 {
+		targetH = 1
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, bounds, xdraw.Over, nil)
+	return dst
 }
 
 // curlGetBytes downloads a URL and returns raw bytes using curl.

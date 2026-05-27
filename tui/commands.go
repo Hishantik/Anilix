@@ -100,7 +100,7 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 }
 
 // downloadCoverCmd downloads and renders a cover image for a given result index.
-func downloadCoverCmd(coverURL string, panelWidth int, index int) tea.Cmd {
+func downloadCoverCmd(coverURL string, panelWidth int, index int, maxRows int) tea.Cmd {
 	if coverURL == "" {
 		return nil
 	}
@@ -113,8 +113,13 @@ func downloadCoverCmd(coverURL string, panelWidth int, index int) tea.Cmd {
 		if err != nil {
 			return CoverImageLoadedMsg{Rendered: "", Index: index}
 		}
-		rendered := RenderCoverImage(img, panelWidth, protocol, cachePath)
-		return CoverImageLoadedMsg{Rendered: rendered, Index: index}
+		result := RenderCoverImageKitty(img, panelWidth, protocol, cachePath, maxRows)
+		return CoverImageLoadedMsg{
+			Rendered:         result.Placeholder,
+			KittyTransmitSeq: result.TransmitSeq,
+			KittyImageID:     result.ImageID,
+			Index:            index,
+		}
 	}
 }
 

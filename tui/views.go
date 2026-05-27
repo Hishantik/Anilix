@@ -53,7 +53,7 @@ func (m *SearchModel) viewSearchState() string {
 		leftW, rightW, _, isNarrow := searchLayout(m.width, m.height)
 
 		listView := m.searchList.View()
-		preview := m.renderMetadataPreview(rightW)
+		preview := m.renderMetadataPreview(rightW, m.height)
 
 		if isNarrow || rightW < 20 {
 			// Narrow: just the list, no preview
@@ -76,7 +76,7 @@ func (m *SearchModel) viewSearchState() string {
 
 // searchLayout computes two-column dimensions for the search results view.
 func searchLayout(totalWidth, totalHeight int) (leftW, rightW, availableH int, isNarrow bool) {
-	availableH = totalHeight - 8
+	availableH = totalHeight - 4
 	if availableH < 5 {
 		availableH = 5
 	}
@@ -108,7 +108,7 @@ func searchLayout(totalWidth, totalHeight int) (leftW, rightW, availableH int, i
 }
 
 // renderMetadataPreview renders a metadata sidebar for the search results view.
-func (m *SearchModel) renderMetadataPreview(width int) string {
+func (m *SearchModel) renderMetadataPreview(width int, termHeight int) string {
 	meta := m.searchState.Metadata
 
 	// No metadata at all yet — show loading or empty
@@ -120,6 +120,16 @@ func (m *SearchModel) renderMetadataPreview(width int) string {
 	}
 
 	var sections []string
+
+	// Cover image — fill most of the available height
+	if meta.CoverImage != "" {
+		maxCoverRows := (termHeight - 4) * 3 / 4
+		if maxCoverRows < 8 {
+			maxCoverRows = 8
+		}
+		cover := truncateToRows(meta.CoverImage, maxCoverRows)
+		sections = append(sections, cover)
+	}
 
 	// Title
 	sections = append(sections, lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Width(width).MaxWidth(width).Render(meta.Title))
@@ -210,7 +220,6 @@ func (m *SearchModel) renderMetadataPreview(width int) string {
 
 	// Source
 	if meta.Source != "" {
-		sections = append(sections, "")
 		sections = append(sections, lipgloss.NewStyle().Faint(true).Render("Source: "+meta.Source))
 	}
 
@@ -230,7 +239,7 @@ func (m *SearchModel) viewDetailState() string {
 		return m.renderDetailSingleColumn(meta, rightW)
 	}
 
-	leftPanel := m.renderDetailLeftPanel(meta, leftW)
+	leftPanel := m.renderDetailLeftPanel(meta, leftW, m.height)
 	rightPanel := m.renderDetailRightPanel(meta, rightW, m.height)
 	gap := strings.Repeat(" ", 2)
 
@@ -239,7 +248,7 @@ func (m *SearchModel) viewDetailState() string {
 
 // detailLayout computes two-column dimensions for the detail view.
 func detailLayout(totalWidth, totalHeight int) (leftW, rightW, availableH int, isNarrow bool) {
-	availableH = totalHeight - 8 // reserve chrome space
+	availableH = totalHeight - 4 // reserve chrome space
 	if availableH < 5 {
 		availableH = 5
 	}
@@ -273,19 +282,32 @@ func detailLayout(totalWidth, totalHeight int) (leftW, rightW, availableH int, i
 	return leftW, rightW, availableH, false
 }
 
-func (m *SearchModel) renderDetailLeftPanel(meta *MetadataPanel, width int) string {
+// truncateToRows truncates a string to at most n lines.
+func truncateToRows(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n")
+}
+
+func (m *SearchModel) renderDetailLeftPanel(meta *MetadataPanel, width int, termHeight int) string {
 	var sections []string
 
-	// Cover image or placeholder
+	// Cover image or placeholder — fill most of the available height
+	maxCoverRows := (termHeight - 4) * 3 / 4
+	if maxCoverRows < 8 {
+		maxCoverRows = 8
+	}
 	if meta.CoverImage != "" {
-		sections = append(sections, meta.CoverImage)
+		cover := truncateToRows(meta.CoverImage, maxCoverRows)
+		sections = append(sections, cover)
 	} else {
 		sections = append(sections, coverPlaceholder(meta.Title, width))
 	}
 
 	// Score badge
 	if meta.Score > 0 {
-		sections = append(sections, "")
 		sections = append(sections, scoreBadge(meta.Score))
 	}
 

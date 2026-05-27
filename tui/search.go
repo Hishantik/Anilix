@@ -73,6 +73,9 @@ type SearchModel struct {
 	trackingEnabled bool
 	anilistToken    string
 	anilistUsername string
+
+	// Kitty graphics
+	kittyImageID uint32 // current image ID in terminal memory, for cleanup
 }
 
 func NewSearchModel() *SearchModel {
@@ -338,6 +341,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = searchState
 				m.episodeState = NewEpisodeState()
 				m.textInput.Placeholder = "Type to search..."
+				if m.kittyImageID != 0 {
+					id := m.kittyImageID
+					m.kittyImageID = 0
+					return m, DeleteKittyImageCmd(id)
+				}
 				return m, nil
 			}
 
@@ -345,6 +353,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == detailState {
 				m.state = searchState
 				m.episodeState = NewEpisodeState()
+				if m.kittyImageID != 0 {
+					id := m.kittyImageID
+					m.kittyImageID = 0
+					return m, tea.Batch(DeleteKittyImageCmd(id), nil)
+				}
 			}
 			m.textInput.Focus()
 			m.textInput.SetValue(m.lastQuery)
@@ -446,7 +459,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Trigger cover download if not already loaded
 					if meta.Cover != "" && meta.CoverImage == "" {
 						leftW, _, _, _ := detailLayout(m.width, m.height)
-						cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchList.Index()))
+						cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchList.Index(), (m.height-4)*3/4))
 					}
 				} else {
 					// Not cached (AniList batch may not have covered this one) — fetch individually
@@ -553,7 +566,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Trigger cover image download for the selected item
 			if meta.Cover != "" && meta.CoverImage == "" {
 				leftW, _, _, _ := detailLayout(m.width, m.height)
-				cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchState.Selected))
+				cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchState.Selected, (m.height-4)*3/4))
 			}
 		}
 
@@ -566,7 +579,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Trigger cover download if not already loaded
 				if meta.Cover != "" && meta.CoverImage == "" {
 					leftW, _, _, _ := detailLayout(m.width, m.height)
-					cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, msg.Index))
+					cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, msg.Index, (m.height-4)*3/4))
 				}
 			}
 			// If not in cache, batch already failed or ID wasn't available
@@ -581,7 +594,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Trigger cover image download
 			if msg.Metadata != nil && msg.Metadata.Cover != "" && msg.Metadata.CoverImage == "" {
 				leftW, _, _, _ := detailLayout(m.width, m.height)
-				cmds = append(cmds, downloadCoverCmd(msg.Metadata.Cover, leftW, msg.Index))
+				cmds = append(cmds, downloadCoverCmd(msg.Metadata.Cover, leftW, msg.Index, (m.height-4)*3/4))
 			}
 		}
 
@@ -627,6 +640,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Also update current metadata if it's the selected item
 			if m.searchState.Metadata != nil && msg.Index == m.searchState.Selected {
 				m.searchState.Metadata.CoverImage = msg.Rendered
+			}
+			// For Kitty protocol, transmit the image to terminal memory
+			// via tea.Raw() (bypasses the ultraviolet renderer).
+			// Delete old image first, then transmit the new one.
+			if msg.KittyTransmitSeq != "" {
+				oldID := m.kittyImageID
+				m.kittyImageID = msg.KittyImageID
+				return m, tea.Batch(
+					DeleteKittyImageCmd(oldID),
+					tea.Raw(msg.KittyTransmitSeq),
+				)
 			}
 		}
 

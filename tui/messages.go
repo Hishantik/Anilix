@@ -63,8 +63,10 @@ type progressTickMsg struct{}
 
 // CoverImageLoadedMsg is sent when a cover image has been downloaded and rendered.
 type CoverImageLoadedMsg struct {
-	Rendered string // ANSI half-block rendered image
-	Index    int    // Result index this cover belongs to
+	Rendered         string // Rendered image (SGR half-block or Unicode placeholder text)
+	KittyTransmitSeq string // APC sequence for Kitty graphics (empty for non-Kitty)
+	KittyImageID     uint32 // Image ID for Kitty graphics cleanup
+	Index            int    // Result index this cover belongs to
 }
 
 // TrackingUpdateMsg is sent after a tracking progress update completes.
