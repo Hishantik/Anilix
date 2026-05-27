@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hishantik/anilix/auth"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -25,6 +27,8 @@ func (m *SearchModel) View() tea.View {
 		content = m.viewConfirmQuit()
 	case settingsState:
 		content = m.viewSettings()
+	case anilistLoginState:
+		content = m.viewAniListLogin()
 	}
 
 	v := tea.NewView(m.renderChrome(content))
@@ -665,6 +669,30 @@ func (m *SearchModel) viewSettings() string {
 		aniskipStyle.Render(aniskipVal),
 	)
 
+	// AniList row
+	var anilistPill string
+	if auth.IsLoggedIn() {
+		anilistPill = lipgloss.NewStyle().
+			Background(lipgloss.Color("#16732b")).
+			Foreground(lipgloss.Color("#ffffff")).
+			Padding(0, 1).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#16732b")).
+			Render("Connected")
+	} else {
+		anilistPill = lipgloss.NewStyle().
+			Background(lipgloss.Color("#c71013")).
+			Foreground(lipgloss.Color("#ffffff")).
+			Padding(0, 1).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#c71013")).
+			Render("Disconnected")
+	}
+	anilistRow := lipgloss.JoinHorizontal(lipgloss.Center,
+		labelStyle.Render("AniList:"),
+		anilistPill,
+	)
+
 	popupWidth := 44
 	innerWidth := popupWidth - 2
 	boxWidth := innerWidth - 6 // 3 padding each side
@@ -672,6 +700,29 @@ func (m *SearchModel) viewSettings() string {
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		qualityRow,
 		lipgloss.NewStyle().MarginTop(1).Render(aniskipRow),
+		lipgloss.NewStyle().MarginTop(1).Render(anilistRow),
+	)
+
+	popup := lipgloss.JoinVertical(lipgloss.Center, title, lipgloss.NewStyle().MarginTop(1).Render(content))
+	popupBox := gradientPopupBox(popup, popupWidth, 3)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popupBox)
+}
+
+func (m *SearchModel) viewAniListLogin() string {
+	fg := Theme.Text
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(fg).Align(lipgloss.Center)
+
+	popupWidth := 44
+	innerWidth := popupWidth - 2
+	boxWidth := innerWidth - 6
+
+	title := titleStyle.Width(boxWidth).Render("AniList Login")
+	spinnerView := m.loading.View()
+	msg := lipgloss.NewStyle().Foreground(fg).Render("Waiting for browser authorization...")
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		spinnerView+" "+msg,
+		lipgloss.NewStyle().Foreground(Theme.Faint).MarginTop(1).Render("Press Esc to cancel"),
 	)
 
 	popup := lipgloss.JoinVertical(lipgloss.Center, title, lipgloss.NewStyle().MarginTop(1).Render(content))

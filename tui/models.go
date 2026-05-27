@@ -12,6 +12,7 @@ const (
 	detailState
 	confirmQuitState
 	settingsState
+	anilistLoginState
 )
 
 // SelectionResult holds the selected anime and episode

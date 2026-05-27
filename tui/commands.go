@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hishantik/anilix/aniskip"
+	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/player"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
@@ -666,6 +667,26 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skip
 	}
 
 	return nil
+}
+
+// doAniListLogin starts the OAuth browser flow and returns a message when complete.
+func doAniListLogin() tea.Cmd {
+	return func() tea.Msg {
+		auth.Quiet = true
+		defer func() { auth.Quiet = false }()
+		err := auth.Login()
+		return AniListLoginMsg{Err: err}
+	}
+}
+
+// doAniListLogout clears stored AniList credentials.
+func doAniListLogout() tea.Cmd {
+	return func() tea.Msg {
+		auth.Quiet = true
+		defer func() { auth.Quiet = false }()
+		err := auth.Logout()
+		return AniListLoginMsg{Err: err}
+	}
 }
 
 func matchScore(name, query string) int {

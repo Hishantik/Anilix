@@ -25,6 +25,21 @@ const (
 	RedirectURI  = "http://localhost:9999"
 )
 
+// Quiet suppresses stdout output when true (for TUI usage).
+var Quiet bool
+
+func info(format string, a ...interface{}) {
+	if !Quiet {
+		fmt.Printf(format, a...)
+	}
+}
+
+func infoPrintln(a ...interface{}) {
+	if !Quiet {
+		fmt.Println(a...)
+	}
+}
+
 // Login performs the OAuth2 Authorization Code Grant flow:
 // starts a localhost callback server, opens the browser, waits for the code, exchanges it for a token.
 func Login() error {
@@ -39,12 +54,12 @@ func Login() error {
 		ClientID, RedirectURI,
 	)
 
-	fmt.Println("Opening browser for AniList login...")
+	infoPrintln("Opening browser for AniList login...")
 	if err := openBrowser(authURL); err != nil {
-		fmt.Printf("Could not open browser automatically.\nPlease open this URL manually:\n\n  %s\n\n", authURL)
+		info("Could not open browser automatically.\nPlease open this URL manually:\n\n  %s\n\n", authURL)
 	}
 
-	fmt.Println("Waiting for AniList authorization...")
+	infoPrintln("Waiting for AniList authorization...")
 
 	code, err := waitForCode(listener)
 	if err != nil {
@@ -61,11 +76,11 @@ func LoginManual() error {
 		ClientID, RedirectURI,
 	)
 
-	fmt.Printf("Open this URL in your browser:\n\n  %s\n\n", authURL)
-	fmt.Println("After authorizing, you will be redirected to a URL like:")
-	fmt.Printf("  %s/?code=XXXXXX\n", RedirectURI)
-	fmt.Println()
-	fmt.Print("Paste the full redirect URL here: ")
+	info("Open this URL in your browser:\n\n  %s\n\n", authURL)
+	infoPrintln("After authorizing, you will be redirected to a URL like:")
+	info("  %s/?code=XXXXXX\n", RedirectURI)
+	infoPrintln()
+	info("Paste the full redirect URL here: ")
 
 	input := readLine()
 
@@ -82,7 +97,7 @@ func Logout() error {
 	config.Set("anilist.token", "")
 	config.Set("anilist.username", "")
 	config.Set("anilist.user_id", 0)
-	fmt.Println("Logged out of AniList.")
+	infoPrintln("Logged out of AniList.")
 	return nil
 }
 
@@ -155,13 +170,13 @@ func finishLogin(token string) error {
 	username, userID, err := client.GetViewer(ctx)
 	if err != nil {
 		log.Printf("[anilix] warning: token saved but could not fetch user info: %v\n", err)
-		fmt.Println("Token saved, but could not verify login. It may be invalid.")
+		infoPrintln("Token saved, but could not verify login. It may be invalid.")
 		return nil
 	}
 
 	config.Set("anilist.username", username)
 	config.Set("anilist.user_id", userID)
-	fmt.Printf("Logged in to AniList as %s\n", username)
+	info("Logged in to AniList as %s\n", username)
 	return nil
 }
 

@@ -81,3 +81,8 @@ type TrackingStatusLoadedMsg struct {
 	Status   string
 	Progress int
 }
+
+// AniListLoginMsg is sent when the AniList OAuth login flow completes.
+type AniListLoginMsg struct {
+	Err error
+}

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/config"
 	allanime "github.com/hishantik/anilix/provider/allanime"
 	"github.com/hishantik/anilix/provider/anilist"
@@ -277,7 +278,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsState.Cursor--
 				}
 			case "down", "j":
-				if m.settingsState.Cursor < 1 {
+				if m.settingsState.Cursor < 2 {
 					m.settingsState.Cursor++
 				}
 			case "left", "h", "right", "l":
@@ -297,12 +298,39 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.settingsState.Quality = qualities[idx]
 					config.Set("quality", m.settingsState.Quality)
-				} else {
+				} else if m.settingsState.Cursor == 1 {
 					m.settingsState.AniskipEnabled = !m.settingsState.AniskipEnabled
 					config.Set("aniskip.enabled", m.settingsState.AniskipEnabled)
 				}
+			case "enter":
+				if m.settingsState.Cursor == 2 {
+					if auth.IsLoggedIn() {
+						// Logout immediately
+						auth.Quiet = true
+						err := auth.Logout()
+						auth.Quiet = false
+						if err == nil {
+							m.trackingEnabled = false
+							m.anilistToken = ""
+							m.anilistUsername = ""
+						}
+					} else {
+						// Start OAuth login flow
+						m.state = anilistLoginState
+						return m, doAniListLogin()
+					}
+				}
 			case "esc":
 				m.state = m.prevState
+				return m, nil
+			}
+			return m, nil
+		}
+
+		if m.state == anilistLoginState {
+			switch msg.String() {
+			case "esc":
+				m.state = settingsState
 				return m, nil
 			}
 			return m, nil
@@ -682,6 +710,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.episodeState.TrackingStatus = msg.Status
 			m.episodeState.TrackingProgress = msg.Progress
+		}
+
+	case AniListLoginMsg:
+		m.state = settingsState
+		if msg.Err != nil {
+			log.Printf("[anilix] anilist login failed: %v\n", msg.Err)
+		} else {
+			// Login succeeded — update state
+			m.anilistToken = config.GetString("anilist.token")
+			m.anilistUsername = auth.GetUsername()
+			m.trackingEnabled = m.anilistToken != ""
 		}
 
 	case TUIErrorMsg:
