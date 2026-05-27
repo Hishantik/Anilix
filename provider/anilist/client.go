@@ -19,6 +19,7 @@ const (
 
 type Client struct {
 	baseURL     string
+	token       string
 	rateLimiter *rateLimiter
 	cache       map[int]*MediaData
 	cacheMu     sync.RWMutex
@@ -67,6 +68,15 @@ func (r *rateLimiter) waitForToken() {
 func NewClient() *Client {
 	return &Client{
 		baseURL:     BaseURL,
+		rateLimiter: newRateLimiter(RateLimit, time.Second),
+		cache:       make(map[int]*MediaData),
+	}
+}
+
+func NewAuthenticatedClient(token string) *Client {
+	return &Client{
+		baseURL:     BaseURL,
+		token:       token,
 		rateLimiter: newRateLimiter(RateLimit, time.Second),
 		cache:       make(map[int]*MediaData),
 	}
@@ -224,11 +234,19 @@ func (c *Client) doGraphQL(ctx context.Context, query string, variables map[stri
 func (c *Client) doGraphQLCurl(ctx context.Context, reqBody []byte) ([]byte, error) {
 	agent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-	cmd := exec.CommandContext(ctx, "curl", "-s", "-X", "POST", c.baseURL,
+	args := []string{"-s", "-X", "POST", c.baseURL,
 		"-H", "Content-Type: application/json",
-		"-H", "User-Agent: "+agent,
+		"-H", "User-Agent: " + agent,
 		"-H", "Referer: https://anilist.co",
-		"-d", "@-")
+	}
+
+	if c.token != "" {
+		args = append(args, "-H", "Authorization: Bearer "+c.token)
+	}
+
+	args = append(args, "-d", "@-")
+
+	cmd := exec.CommandContext(ctx, "curl", args...)
 
 	cmd.Stdin = bytes.NewReader(reqBody)
 

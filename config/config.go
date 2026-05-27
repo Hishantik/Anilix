@@ -37,7 +37,8 @@ func setName() {
 }
 
 func setFs() {
-	v.SetFs(nil)
+	// Intentionally empty — afero.NewOsFs() is the default.
+	// Previously had v.SetFs(nil) which crashes on PRoot/Android.
 }
 
 func setEnvs() {
@@ -51,6 +52,7 @@ func setDefaults() {
 	v.SetDefault("source", "")
 	v.SetDefault("history.enabled", true)
 	v.SetDefault("aniskip.enabled", true)
+	v.SetDefault("anilist.tracking.enabled", true)
 }
 
 func setPaths() {

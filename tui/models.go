@@ -62,6 +62,8 @@ type EpisodeState struct {
 	EpisodeMetadata   *EpisodeMetadataPanel
 	MetadataLoading   bool
 	Playing           bool
+	TrackingStatus    string // "CURRENT", "COMPLETED", etc.
+	TrackingProgress  int
 }
 
 // EpisodeMetadataPanel holds metadata for a single episode

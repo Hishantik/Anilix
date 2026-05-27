@@ -521,6 +521,51 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 	}
 }
 
+// updateTrackingCmd fires a fire-and-forget tracking update after playback starts.
+func (m *SearchModel) updateTrackingCmd(anilistID, episodeNum, totalEpisodes int) tea.Cmd {
+	token := m.anilistToken
+	if token == "" || anilistID == 0 {
+		return nil
+	}
+
+	return func() tea.Msg {
+		client := anilist.NewAuthenticatedClient(token)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		status := "CURRENT"
+		if totalEpisodes > 0 && episodeNum >= totalEpisodes {
+			status = "COMPLETED"
+		}
+
+		err := client.SaveMediaListEntry(ctx, anilistID, status, episodeNum)
+		return TrackingUpdateMsg{Status: status, Progress: episodeNum, Err: err}
+	}
+}
+
+// fetchTrackingStatusCmd fetches the current AniList tracking status for an anime.
+func (m *SearchModel) fetchTrackingStatusCmd(anilistID int) tea.Cmd {
+	token := m.anilistToken
+	if token == "" || anilistID == 0 {
+		return nil
+	}
+
+	return func() tea.Msg {
+		client := anilist.NewAuthenticatedClient(token)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		entry, err := client.GetMediaListStatus(ctx, anilistID)
+		if err != nil {
+			return TrackingStatusLoadedMsg{}
+		}
+		if entry == nil {
+			return TrackingStatusLoadedMsg{}
+		}
+		return TrackingStatusLoadedMsg{Status: entry.Status, Progress: entry.Progress}
+	}
+}
+
 func filterByQuality(streams []*source.Stream, quality string) []*source.Stream {
 	if quality == "" || quality == "auto" {
 		return streams

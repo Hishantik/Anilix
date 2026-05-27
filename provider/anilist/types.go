@@ -77,3 +77,30 @@ type FuzzyDate struct {
 }
 
 type any = interface{}
+
+// Viewer query response
+
+type ViewerData struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type ViewerResponse struct {
+	Viewer ViewerData `json:"Viewer"`
+}
+
+// MediaList tracking types
+
+type MediaListEntry struct {
+	ID       int    `json:"id"`
+	Status   string `json:"status"`
+	Progress int    `json:"progress"`
+}
+
+type MediaListResponse struct {
+	MediaList *MediaListEntry `json:"MediaList"`
+}
+
+type SaveMediaListResponse struct {
+	SaveMediaListEntry MediaListEntry `json:"SaveMediaListEntry"`
+}

@@ -412,6 +412,14 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 	// Set episode list size for the right panel
 	m.episodeList.SetSize(width, episodeHeight)
 
+	// Tracking status
+	if m.trackingEnabled && m.episodeState.TrackingStatus != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Success).Render(
+			formatTrackingStatus(m.episodeState.TrackingStatus, m.episodeState.TrackingProgress)))
+	} else if m.trackingEnabled {
+		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
+	}
+
 	// Episode area
 	if m.episodeState.Loading {
 		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading episodes...")
@@ -514,6 +522,14 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 	}
 	lines = append(lines, "")
 	lines = append(lines, gradientLine(sepWidth))
+
+	// Tracking status (single-column)
+	if m.trackingEnabled && m.episodeState.TrackingStatus != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Success).Render(
+			formatTrackingStatus(m.episodeState.TrackingStatus, m.episodeState.TrackingProgress)))
+	} else if m.trackingEnabled {
+		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
+	}
 
 	// Episodes
 	if m.episodeState.Loading {
@@ -675,6 +691,11 @@ func (m *SearchModel) renderChrome(content string) string {
 	rightInfo := lipgloss.NewStyle().Render(
 		fmt.Sprintf("%s  %s", switchText, lipgloss.NewStyle().Foreground(Theme.Primary).Render(qualityText)))
 
+	// AniList logged-in indicator
+	if m.trackingEnabled && m.anilistUsername != "" {
+		rightInfo += "  " + lipgloss.NewStyle().Foreground(Theme.Success).Render("\u25cf "+m.anilistUsername)
+	}
+
 	// Pad title bar to push right info to the right
 	titleBarWidth := lipgloss.Width(titleBar)
 	rightInfoWidth := lipgloss.Width(rightInfo)
@@ -739,4 +760,20 @@ func (m *SearchModel) renderChrome(content string) string {
 	result += content + strings.Repeat("\n", remaining) + progressBar + helpBox
 
 	return result
+}
+
+func formatTrackingStatus(status string, progress int) string {
+	labels := map[string]string{
+		"CURRENT":   "Watching",
+		"PLANNING":  "Planned",
+		"COMPLETED": "Completed",
+		"DROPPED":   "Dropped",
+		"PAUSED":    "Paused",
+		"REPEATING": "Rewatching",
+	}
+	label := labels[status]
+	if label == "" {
+		label = status
+	}
+	return fmt.Sprintf("AniList: %s (Ep %d)", label, progress)
 }

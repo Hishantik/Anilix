@@ -66,3 +66,16 @@ type CoverImageLoadedMsg struct {
 	Rendered string // ANSI half-block rendered image
 	Index    int    // Result index this cover belongs to
 }
+
+// TrackingUpdateMsg is sent after a tracking progress update completes.
+type TrackingUpdateMsg struct {
+	Status   string
+	Progress int
+	Err      error
+}
+
+// TrackingStatusLoadedMsg is sent when the current tracking status for an anime is fetched.
+type TrackingStatusLoadedMsg struct {
+	Status   string
+	Progress int
+}

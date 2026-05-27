@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/tui"
 	"github.com/spf13/cobra"
 )
@@ -19,10 +18,6 @@ var rootCmd = &cobra.Command{
 
 func Execute() error {
 	return rootCmd.Execute()
-}
-
-func Init() error {
-	return config.Setup()
 }
 
 // tuiCmd represents the TUI search command
@@ -49,13 +44,3 @@ func runTUI(cmd *cobra.Command, args []string) {
 	fmt.Printf("Selected: %s (MAL ID: %d, Episode: %s)\n", result.Anime.Name, result.Anime.MALID, result.Episode)
 }
 
-func main() {
-	if err := Init(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if err := Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
